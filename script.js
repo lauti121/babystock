@@ -14,6 +14,7 @@ const themes = {
   sage: { accent: "#5c9a83", dark: "#3f7662", soft: "#dff2e9", quiet: "#f1faf6", heroA: "#def3e9", heroB: "#e7f3ee" },
   sun: { accent: "#d98b57", dark: "#ac6334", soft: "#ffe8d8", quiet: "#fff7f1", heroA: "#ffe6d5", heroB: "#fff0d9" }
 };
+const defaultPreferences = () => ({ theme: "rose", displayName: "", bio: "", avatar: "", background: "" });
 
 const $ = (id) => document.getElementById(id);
 const authScreen = $("auth-screen"), appScreen = $("app"), toast = $("toast");
@@ -105,10 +106,10 @@ async function openFirebaseFamily(user) {
     await firebase.updateDoc(familyRef, { roles: { [user.uid]: "owner" } });
     state.family.roles = { [user.uid]: "owner" };
   }
-  state.preferences = { ...state.preferences, ...(userSnapshot.data().preferences || {}) };
+  state.preferences = { ...defaultPreferences(), ...(userSnapshot.data().preferences || {}) };
   const listen = (path, prop, order = "createdAt") => firebase.onSnapshot(firebase.query(firebase.collection(familyRef, path), firebase.orderBy(order, "desc")), (snapshot) => {
     state[prop] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
-    if (prop === "babies" && (!state.activeBabyId || !state.babies.some((b) => b.id === state.activeBabyId))) state.activeBabyId = state.babies[0]?.id || "";
+    if (prop === "babies" && (!state.activeBabyId || !state.babies.some((b) => b.id === state.activeBabyId && !b.archived))) state.activeBabyId = state.babies.find((b) => !b.archived)?.id || "";
     render();
   }, (error) => { console.error(error); showToast("No se pudieron actualizar los datos. Revisa las reglas de Firestore."); });
   unsubscribe = [listen("babies", "babies"), listen("products", "products", "updatedAt"), listen("movements", "movements")];
@@ -129,7 +130,8 @@ function render() {
   $("today-label").textContent = new Intl.DateTimeFormat("es-CL", { weekday: "long", day: "numeric", month: "long" }).format(new Date()).toUpperCase();
   $("baby-welcome-name").textContent = babyName;
   $("welcome-copy").textContent = state.preferences.bio || "Un vistazo rápido a lo que necesitan hoy.";
-  $("baby-select").innerHTML = state.babies.map((baby) => `<option value="${baby.id}" ${baby.id === state.activeBabyId ? "selected" : ""}>${escapeHtml(baby.name)}</option>`).join("");
+  const visibleBabies = state.babies.filter((baby) => !baby.archived);
+  $("baby-select").innerHTML = visibleBabies.map((baby) => `<option value="${baby.id}" ${baby.id === state.activeBabyId ? "selected" : ""}>${escapeHtml(baby.name)}</option>`).join("");
   $("total-products").textContent = products.length;
   $("low-products").textContent = low.length;
   $("healthy-products").textContent = Math.max(products.length - low.length, 0);
@@ -263,6 +265,11 @@ async function addBaby(event) {
   event.preventDefault(); const name = $("baby-name").value.trim(); if (!name) return; const baby = { id: uid("baby"), name, createdAt: Date.now() };
   try { if (mode === "demo") { state.babies.push(baby); state.activeBabyId = baby.id; saveDemo(); render(); } else await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "babies", baby.id), baby); $("baby-form").reset(); closeModals(); showToast("Bebé agregado."); } catch (error) { showToast(error.message || "No se pudo agregar."); }
 }
+async function archiveBaby() {
+  const baby = state.babies.find((item) => item.id === state.activeBabyId); if (!baby) return showToast("No hay un bebé activo para archivar.");
+  if (!window.confirm(`¿Archivar a “${baby.name}”? Sus productos e historial se conservarán.`)) return;
+  try { const update = { ...baby, archived: true, archivedAt: Date.now() }; if (mode === "demo") { state.babies = state.babies.map((item) => item.id === baby.id ? update : item); state.activeBabyId = state.babies.find((item) => !item.archived)?.id || ""; saveDemo(); render(); } else await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "babies", baby.id), update, { merge: true }); showToast("Bebé archivado. Sus datos no se borraron."); } catch (error) { showToast(error.message || "No se pudo archivar."); }
+}
 
 let registering = false;
 async function handleAuth(event) {
@@ -288,6 +295,7 @@ $("demo-button").onclick = () => { clearSubscriptions(); loadDemo(); showApp(); 
 $("add-product-button").onclick = () => openProductModal(); $("product-form").addEventListener("submit", saveProduct);
 $("archive-product-button").onclick = archiveProduct;
 $("add-baby-button").onclick = () => openModal("baby-modal"); $("baby-form").addEventListener("submit", addBaby);
+$("archive-baby-button").onclick = archiveBaby;
 $("baby-select").onchange = (event) => { state.activeBabyId = event.target.value; saveDemo(); render(); };
 $("profile-button").onclick = openProfileModal; $("nav-profile").onclick = openProfileModal; $("profile-form").addEventListener("submit", saveProfile);
 $("invite-form").addEventListener("submit", createInvite); $("join-form").addEventListener("submit", joinFamily);
