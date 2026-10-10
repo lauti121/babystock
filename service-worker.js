@@ -1,9 +1,12 @@
-const CACHE = "babystock-v1";
+// Incrementar al publicar cambios de interfaz para que la PWA descargue la versión nueva.
+const CACHE = "babystock-v3";
 const ASSETS = ["./", "./index.html", "./style.css", "./script.js", "./firebase-config.js", "./manifest.json", "./icons/icon.svg"];
 
-self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS))));
-self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim()));
+self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
+self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
-  event.respondWith(caches.match(event.request).then((cached) => cached || fetch(event.request)));
+  const url = new URL(event.request.url);
+  const currentCode = event.request.mode === "navigate" || ["/index.html", "/script.js", "/style.css", "/firebase-config.js"].some((path) => url.pathname.endsWith(path));
+  event.respondWith(currentCode ? fetch(event.request).then((response) => { const copy = response.clone(); caches.open(CACHE).then((cache) => cache.put(event.request, copy)); return response; }).catch(() => caches.match(event.request)) : caches.match(event.request).then((cached) => cached || fetch(event.request)));
 });

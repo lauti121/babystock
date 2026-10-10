@@ -1,7 +1,7 @@
 import { firebaseConfig, firebaseIsConfigured } from "./firebase-config.js";
 
 const DEMO_KEY = "babystock-demo-v1";
-const icons = { "Pañales": "▣", "Toallitas": "≈", "Fórmula": "◉", "Higiene": "✦", "Otros": "◌" };
+const icons = { "Pañales": "▣", "Toallitas": "≈", "Fórmula": "◉", "Comida": "◒", "Higiene": "✦", "Otros": "◌" };
 let mode = "demo";
 let firebase = null;
 let unsubscribe = [];
@@ -35,10 +35,13 @@ function sampleData() {
     products: [
       { id: "p-m", babyId, name: "Pañales Premium", category: "Pañales", size: "M", quantity: 24, unit: "unidades", minStock: 20, notes: "", createdAt: Date.now(), updatedAt: Date.now() },
       { id: "p-g", babyId, name: "Pañales Ultra", category: "Pañales", size: "G", quantity: 8, unit: "unidades", minStock: 15, notes: "", createdAt: Date.now(), updatedAt: Date.now() },
-      { id: "p-wipes", babyId, name: "Toallitas húmedas", category: "Toallitas", size: "", quantity: 3, unit: "paquetes", minStock: 3, notes: "Sin perfume", createdAt: Date.now(), updatedAt: Date.now() }
+      { id: "p-wipes", babyId, name: "Toallitas húmedas", category: "Toallitas", size: "", quantity: 3, unit: "paquetes", minStock: 3, unitPrice: 2790, notes: "Sin perfume", createdAt: Date.now(), updatedAt: Date.now() },
+      { id: "p-formula", babyId, name: "Fórmula infantil", category: "Fórmula", size: "Etapa 1", quantity: 2, unit: "tarros", minStock: 1, unitPrice: 23990, unitContent: 800, notes: "800 g por tarro", createdAt: Date.now(), updatedAt: Date.now() }
     ],
     movements: [
-      { id: "m-demo", babyId, productId: "p-g", productName: "Pañales Ultra", type: "consumo", delta: -2, createdAt: Date.now() - 1000 * 60 * 90, actor: "Demo" }
+      { id: "m-demo", babyId, productId: "p-g", productName: "Pañales Ultra", type: "consumo", delta: -2, createdAt: Date.now() - 1000 * 60 * 90, actor: "Demo" },
+      { id: "m-formula-1", babyId, productId: "p-formula", productName: "Fórmula infantil", type: "consumo", delta: -1, createdAt: Date.now() - 1000 * 60 * 60 * 24 * 12, actor: "Demo" },
+      { id: "m-formula-2", babyId, productId: "p-formula", productName: "Fórmula infantil", type: "consumo", delta: -1, createdAt: Date.now() - 1000 * 60 * 60 * 24 * 5, actor: "Demo" }
     ],
     activeBabyId: babyId, preferences: { theme: "rose", displayName: "", bio: "", avatar: "", background: "" }
   };
@@ -153,13 +156,47 @@ function applyPreferences() {
   root.style.setProperty("--accent", colors.accent); root.style.setProperty("--accent-dark", colors.dark); root.style.setProperty("--accent-soft", colors.soft); root.style.setProperty("--accent-quiet", colors.quiet); root.style.setProperty("--hero-a", colors.heroA); root.style.setProperty("--hero-b", colors.heroB); root.style.setProperty("--user-bg", prefs.background ? `url('${prefs.background}')` : "none");
   const initials = (prefs.displayName || "BS").slice(0, 2).toUpperCase(); [$("profile-button"), $("profile-avatar-preview")].forEach((node) => { if (!node) return; node.textContent = initials; node.style.backgroundImage = prefs.avatar ? `url('${prefs.avatar}')` : ""; node.classList.toggle("has-image", !!prefs.avatar); });
 }
+function formatCLP(value) { return `$${Math.round(value || 0).toLocaleString("es-CL")}`; }
+function productConsumption(product, now = Date.now()) {
+  const windowStart = now - 30 * 86400000;
+  const movements = state.movements.filter((movement) => movement.babyId === state.activeBabyId && movement.productId === product.id && movement.type === "consumo" && movement.createdAt >= windowStart);
+  const used = movements.reduce((sum, movement) => sum + Math.abs(Number(movement.delta) || 0), 0);
+  if (!used) return null;
+  const first = Math.min(...movements.map((movement) => movement.createdAt));
+  // La muestra se estabiliza con siete días; nunca extrapolamos más de los últimos treinta.
+  const observedDays = Math.min(30, Math.max(7, Math.ceil((now - first) / 86400000) + 1));
+  const dailyRate = used / observedDays;
+  return { movements, used, observedDays, dailyRate, weekly: dailyRate * 7, daysLeft: Number(product.quantity) / dailyRate };
+}
 function renderStats(products) {
-  const baby = state.babies.find((b) => b.id === state.activeBabyId) || {}; const since = Date.now() - 30 * 86400000;
-  const moves = state.movements.filter((m) => m.babyId === state.activeBabyId && m.type === "consumo" && m.createdAt >= since);
-  const spent = moves.reduce((sum, m) => sum + Math.abs(m.delta) * Number(state.products.find((p) => p.id === m.productId)?.unitPrice || 0), 0);
-  $("stats-grid").innerHTML = `<article><strong>${baby.ageMonths || "—"}</strong><small>meses</small></article><article><strong>${baby.weightKg || "—"}</strong><small>kg</small></article><article><strong>$${Math.round(spent).toLocaleString("es-CL")}</strong><small>30 días</small></article>`;
-  const lines = products.map((p) => { const used = moves.filter((m) => m.productId === p.id).reduce((s,m) => s + Math.abs(m.delta), 0); const rate = used / 30; return rate ? { p, days: Math.floor(p.quantity / rate), weekly: Math.ceil(rate * 7 * 1.15) } : null; }).filter(Boolean).slice(0,4);
-  $("forecast-list").innerHTML = lines.length ? lines.map((x) => `<div class="insight"><span class="insight-icon">⌁</span><div><strong>${escapeHtml(x.p.name)}: ${x.days} días estimados</strong><p>Stock semanal recomendado: ${x.weekly} ${escapeHtml(x.p.unit)}.</p></div></div>`).join("") : `<p class="empty-list">Registra consumos para generar proyecciones reales.</p>`;
+  const now = Date.now();
+  const baby = state.babies.find((item) => item.id === state.activeBabyId) || {};
+  const allConsumption = products.map((product) => ({ product, data: productConsumption(product, now) })).filter((item) => item.data);
+  const spent30 = allConsumption.reduce((sum, item) => sum + item.data.used * Number(item.product.unitPrice || 0), 0);
+  const projected4Weeks = allConsumption.reduce((sum, item) => sum + item.data.weekly * 4 * Number(item.product.unitPrice || 0), 0);
+  $("stats-grid").innerHTML = `<article><strong>${baby.ageMonths || "—"}</strong><small>meses</small></article><article><strong>${baby.weightKg || "—"}</strong><small>kg</small></article><article><strong>${baby.heightCm || "—"}</strong><small>cm</small></article>`;
+  $("spending-summary").innerHTML = `<article><strong>${formatCLP(spent30)}</strong><small>consumo valorizado · últimos 30 días</small></article><article><strong>${formatCLP(projected4Weeks)}</strong><small>proyección de gasto · próximas 4 semanas</small></article>`;
+
+  const categoryTotals = new Map();
+  allConsumption.forEach(({ product, data }) => {
+    const current = categoryTotals.get(product.category) || { units: 0, spent: 0 };
+    current.units += data.used; current.spent += data.used * Number(product.unitPrice || 0); categoryTotals.set(product.category, current);
+  });
+  $("category-breakdown").innerHTML = categoryTotals.size ? [...categoryTotals.entries()].sort((a, b) => b[1].spent - a[1].spent).map(([category, total]) => `<div class="category-stat"><strong>${escapeHtml(category)}</strong><span>${total.units.toLocaleString("es-CL")} usados · ${formatCLP(total.spent)}</span></div>`).join("") : `<p class="stats-note">Agrega el precio y registra consumos para convertir tu inventario en estadísticas de gasto reales.</p>`;
+
+  const forecasts = allConsumption.sort((a, b) => (a.product.category === "Fórmula" ? -1 : 0) - (b.product.category === "Fórmula" ? -1 : 0) || a.data.daysLeft - b.data.daysLeft).slice(0, 5);
+  const formulaWithoutData = products.filter((product) => product.category === "Fórmula" && !productConsumption(product, now));
+  const forecastLines = forecasts.map(({ product, data }) => {
+    const safeDays = Math.max(0, Math.floor(data.daysLeft));
+    const recommended = Math.max(Number(product.minStock || 0), Math.ceil(data.weekly * 1.2));
+    const formulaDetail = product.category === "Fórmula" && Number(product.unitContent) > 0 ? ` Equivale a ${(Number(product.quantity) * Number(product.unitContent)).toLocaleString("es-CL")} g/ml disponibles; consumo estimado: ${(data.weekly * Number(product.unitContent)).toLocaleString("es-CL", { maximumFractionDigits: 0 })} g/ml por semana.` : "";
+    const confidence = data.observedDays < 14 ? ` Muestra inicial: ${data.observedDays} días registrados.` : "";
+    return `<div class="insight"><span class="insight-icon">⌁</span><div><strong>${escapeHtml(product.name)}: aprox. ${safeDays} días (${(data.daysLeft / 7).toLocaleString("es-CL", { maximumFractionDigits: 1 })} semanas)</strong><p>Recomendación semanal: ${recommended} ${escapeHtml(product.unit)} (incluye 20% de margen).${formulaDetail}${confidence}</p></div></div>`;
+  });
+  formulaWithoutData.forEach((product) => forecastLines.push(`<div class="insight"><span class="insight-icon">◉</span><div><strong>${escapeHtml(product.name)}: lista para medir</strong><p>${Number(product.unitContent) ? `Tienes ${(Number(product.quantity) * Number(product.unitContent)).toLocaleString("es-CL")} g/ml disponibles. ` : ""}Descuenta un tarro al terminarlo: con al menos una semana de datos calcularemos cuánto rinde para tu bebé.</p></div></div>`));
+  $("forecast-list").innerHTML = forecastLines.length ? forecastLines.join("") : `<p class="empty-list">Registra consumos para generar proyecciones reales.</p>`;
+
+  $("chile-reference").innerHTML = `<span class="source-chip">REFERENCIA NACIONAL · INE</span><h3>Contexto de precios en Chile</h3><p>En septiembre de 2026 el IPC nacional subió 0,4% y la división “alimentos y bebidas no alcohólicas” aumentó 0,6%. Es una variación oficial de precios, no un gasto promedio recomendado para bebés.</p><p>Tu gasto y tu duración de fórmula se calculan con los precios y consumos que registra tu familia. Así no se mezclan datos reales de tu hogar con una estimación nacional.</p><a href="https://www.ine.gob.cl/sala-de-prensa/prensa/general/noticia/2026/10/08/%C3%ADndice-de-precios-al-consumidor-%28ipc%29-de-septiembre-present%C3%B3-una-variaci%C3%B3n-mensual-de-0-4" target="_blank" rel="noopener noreferrer">Ver publicación del INE ↗</a><br /><a href="https://www.sernac.cl/observatorio/" target="_blank" rel="noopener noreferrer">Cotizar precios en Observatorio SERNAC ↗</a>`;
 }
 function renderAlerts(low) {
   const section = $("alerts-section"), list = $("alerts-list");
@@ -174,7 +211,7 @@ function renderProducts(products) {
     card.dataset.id = product.id; card.classList.toggle("low", isLow(product));
     const icon = fragment.querySelector(".product-icon"); icon.textContent = product.image ? "" : (icons[product.category] || icons.Otros); if (product.image) { icon.style.backgroundImage = `url('${product.image}')`; icon.style.backgroundSize = "cover"; icon.style.backgroundPosition = "center"; }
     fragment.querySelector("h3").textContent = product.name;
-    fragment.querySelector(".product-meta").textContent = [product.category, product.size ? `talla ${product.size}` : "", product.notes || ""].filter(Boolean).join(" · ");
+    fragment.querySelector(".product-meta").textContent = [product.category, product.size ? `talla ${product.size}` : "", product.unitContent ? `${product.unitContent} g/ml` : "", product.notes || ""].filter(Boolean).join(" · ");
     fragment.querySelector(".badge").textContent = isLow(product) ? "REPONER" : "";
     fragment.querySelector(".stock-number").textContent = product.quantity;
     fragment.querySelector(".stock-unit").textContent = product.unit;
@@ -254,12 +291,12 @@ async function saveProfile(event) {
 }
 function openProductModal(product = null) {
   $("product-modal-title").textContent = product ? "Editar producto" : "Nuevo producto";
-  $("product-id").value = product?.id || ""; $("product-name").value = product?.name || ""; $("product-category").value = product?.category || "Pañales"; $("product-size").value = product?.size || ""; $("product-quantity").value = product?.quantity ?? 0; $("product-unit").value = product?.unit || "unidades"; $("product-min").value = product?.minStock ?? 10; $("product-price").value = product?.unitPrice ?? 0; $("product-image").value = ""; $("product-notes").value = product?.notes || ""; $("archive-product-button").classList.toggle("hidden", !product);
+  $("product-id").value = product?.id || ""; $("product-name").value = product?.name || ""; $("product-category").value = product?.category || "Pañales"; $("product-size").value = product?.size || ""; $("product-quantity").value = product?.quantity ?? 0; $("product-unit").value = product?.unit || "unidades"; $("product-min").value = product?.minStock ?? 10; $("product-price").value = product?.unitPrice ?? 0; $("product-content").value = product?.unitContent ?? ""; $("product-image").value = ""; $("product-notes").value = product?.notes || ""; $("archive-product-button").classList.toggle("hidden", !product);
   openModal("product-modal"); $("product-name").focus();
 }
 async function saveProduct(event) {
   event.preventDefault(); const existing = state.products.find((product) => product.id === $("product-id").value); const now = Date.now();
-  const product = { id: existing?.id || uid("product"), babyId: existing?.babyId || state.activeBabyId, name: $("product-name").value.trim(), category: $("product-category").value, size: $("product-size").value.trim(), quantity: Number($("product-quantity").value), unit: $("product-unit").value, minStock: Number($("product-min").value), unitPrice: Number($("product-price").value || 0), image: existing?.image || "", notes: $("product-notes").value.trim(), archived: false, createdAt: existing?.createdAt || now, updatedAt: now };
+  const product = { id: existing?.id || uid("product"), babyId: existing?.babyId || state.activeBabyId, name: $("product-name").value.trim(), category: $("product-category").value, size: $("product-size").value.trim(), quantity: Number($("product-quantity").value), unit: $("product-unit").value, minStock: Number($("product-min").value), unitPrice: Number($("product-price").value || 0), unitContent: Number($("product-content").value || 0), image: existing?.image || "", notes: $("product-notes").value.trim(), archived: false, createdAt: existing?.createdAt || now, updatedAt: now };
   if ($("product-image").files[0]) product.image = await resizeImage($("product-image").files[0], 300);
   if (!product.name) return; let movement = null;
   if (existing && product.quantity !== Number(existing.quantity)) movement = { id: uid("move"), babyId: product.babyId, productId: product.id, productName: productLabel(product), type: "ajuste", delta: product.quantity - Number(existing.quantity), createdAt: now, actor: state.user?.email || "Modo local" };
@@ -314,5 +351,5 @@ document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = 
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
 document.querySelectorAll(".close-modal").forEach((button) => button.onclick = closeModals);
 document.querySelectorAll(".modal").forEach((modal) => modal.addEventListener("click", (event) => { if (event.target === modal) closeModals(); }));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js").catch((error) => console.warn("PWA sin caché:", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261010-stats").catch((error) => console.warn("PWA sin caché:", error)));
 if (firebaseIsConfigured) initFirebase();
