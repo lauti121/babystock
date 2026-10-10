@@ -82,7 +82,7 @@ async function initFirebase() {
 
 async function createFirebaseFamily(user, familyName) {
   const familyRef = firebase.doc(firebase.collection(firebase.db, "families"));
-  await firebase.setDoc(familyRef, { name: familyName, ownerId: user.uid, members: { [user.uid]: true }, createdAt: Date.now() });
+  await firebase.setDoc(familyRef, { name: familyName, ownerId: user.uid, members: { [user.uid]: true }, roles: { [user.uid]: "owner" }, createdAt: Date.now() });
   const babyRef = firebase.doc(firebase.collection(familyRef, "babies"));
   await firebase.setDoc(babyRef, { name: "Mi bebé", createdAt: Date.now() });
   await firebase.setDoc(firebase.doc(firebase.db, "users", user.uid), { familyId: familyRef.id, email: user.email, createdAt: Date.now() });
@@ -214,8 +214,21 @@ function closeModals() { document.querySelectorAll(".modal").forEach((modal) => 
 function openProfileModal() {
   const prefs = state.preferences || {}; $("profile-display-name").value = prefs.displayName || ""; $("profile-bio").value = prefs.bio || "";
   $("profile-name-preview").textContent = prefs.displayName || state.family?.name || "Familia BabyStock";
+  const owner = state.family?.ownerId === state.user?.uid; const role = owner ? "Administrador" : (state.family?.roles?.[state.user?.uid] === "viewer" ? "Solo lectura" : "Colaborador");
+  $("team-role-label").textContent = role; $("owner-invite-area").classList.toggle("hidden", !owner);
   document.querySelectorAll(".theme-swatch").forEach((button) => button.classList.toggle("selected", button.dataset.theme === (prefs.theme || "rose")));
   applyPreferences(); openModal("profile-modal");
+}
+function invitationCode(inviteId) { return `${state.family.id}:${inviteId}`; }
+async function createInvite(event) {
+  event.preventDefault(); if (mode !== "firebase") return showToast("Las invitaciones requieren Firebase.");
+  const email = $("invite-email").value.trim().toLowerCase(); const role = $("invite-role").value; const inviteRef = firebase.doc(firebase.collection(firebase.db, "families", state.family.id, "invitations"));
+  try { await firebase.setDoc(inviteRef, { email, role, status: "pending", createdAt: Date.now(), createdBy: state.user.uid }); const code = invitationCode(inviteRef.id); $("invite-result").textContent = `Comparte este código con ${email}: ${code}`; showToast("Invitación creada."); } catch (error) { showToast(error.message || "No se pudo crear la invitación."); }
+}
+async function joinFamily(event) {
+  event.preventDefault(); if (mode !== "firebase") return showToast("Crea una cuenta Firebase para unirte a una familia.");
+  const [familyId, inviteId] = $("invite-code").value.trim().split(":"); if (!familyId || !inviteId) return showToast("El código no es válido.");
+  try { const familyRef = firebase.doc(firebase.db, "families", familyId); const inviteRef = firebase.doc(familyRef, "invitations", inviteId); const invite = await firebase.getDoc(inviteRef); if (!invite.exists() || invite.data().status !== "pending" || invite.data().email !== state.user.email.toLowerCase()) throw new Error("La invitación no corresponde a este correo o ya fue usada."); const batch = firebase.writeBatch(firebase.db); batch.update(familyRef, { [`members.${state.user.uid}`]: true, [`roles.${state.user.uid}`]: invite.data().role, pendingInvitationId: inviteId }); batch.update(firebase.doc(firebase.db, "users", state.user.uid), { familyId }); batch.update(inviteRef, { status: "accepted", acceptedAt: Date.now(), acceptedBy: state.user.uid }); await batch.commit(); closeModals(); await openFirebaseFamily(state.user); showToast("Ya formas parte de la familia."); } catch (error) { showToast(error.message || "No se pudo aceptar la invitación."); }
 }
 function resizeImage(file, maxSize = 520) {
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = reject; reader.onload = () => { const image = new Image(); image.onload = () => { const scale = Math.min(1, maxSize / Math.max(image.width, image.height)); const canvas = document.createElement("canvas"); canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale); canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height); resolve(canvas.toDataURL("image/jpeg", .78)); }; image.onerror = reject; image.src = reader.result; }; reader.readAsDataURL(file); });
@@ -262,6 +275,7 @@ $("archive-product-button").onclick = archiveProduct;
 $("add-baby-button").onclick = () => openModal("baby-modal"); $("baby-form").addEventListener("submit", addBaby);
 $("baby-select").onchange = (event) => { state.activeBabyId = event.target.value; saveDemo(); render(); };
 $("profile-button").onclick = openProfileModal; $("nav-profile").onclick = openProfileModal; $("profile-form").addEventListener("submit", saveProfile);
+$("invite-form").addEventListener("submit", createInvite); $("join-form").addEventListener("submit", joinFamily);
 document.querySelectorAll(".theme-swatch").forEach((button) => button.onclick = () => { state.preferences = { ...state.preferences, theme: button.dataset.theme }; applyPreferences(); document.querySelectorAll(".theme-swatch").forEach((item) => item.classList.toggle("selected", item === button)); });
 document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = () => { const target = button.dataset.scroll === "shopping" ? $("shopping-list") : appScreen; target.scrollIntoView({ behavior: "smooth" }); });
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };

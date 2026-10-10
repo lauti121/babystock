@@ -2,33 +2,49 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
-    function isMember(familyId) {
+    function family(familyId) { return get(/databases/$(database)/documents/families/$(familyId)); }
+    function isMember(familyId) { return signedIn() && family(familyId).data.members[request.auth.uid] == true; }
+    function isOwner(familyId) { return isMember(familyId) && family(familyId).data.ownerId == request.auth.uid; }
+    function canEdit(familyId) { return isOwner(familyId) || family(familyId).data.roles[request.auth.uid] == 'editor'; }
+    function hasPendingInvite(familyId) {
       return signedIn()
-        && get(/databases/$(database)/documents/families/$(familyId)).data.members[request.auth.uid] == true;
+        && exists(/databases/$(database)/documents/families/$(familyId)/invitations/$(request.resource.data.pendingInvitationId))
+        && get(/databases/$(database)/documents/families/$(familyId)/invitations/$(request.resource.data.pendingInvitationId)).data.email == request.auth.token.email
+        && get(/databases/$(database)/documents/families/$(familyId)/invitations/$(request.resource.data.pendingInvitationId)).data.status == 'pending';
     }
 
     match /users/{userId} {
-      allow create: if signedIn() && request.auth.uid == userId;
-      allow read: if signedIn() && request.auth.uid == userId;
-      // La familia no puede cambiarse desde el cliente después de crear la cuenta.
-      allow update: if signedIn() && request.auth.uid == userId
-        && request.resource.data.familyId == resource.data.familyId;
+      allow create, read: if signedIn() && request.auth.uid == userId;
+      allow update: if signedIn() && request.auth.uid == userId && (
+        request.resource.data.familyId == resource.data.familyId ||
+        getAfter(/databases/$(database)/documents/families/$(request.resource.data.familyId)).data.members[request.auth.uid] == true
+      );
       allow delete: if false;
     }
 
     match /families/{familyId} {
-      // Solo el creador puede formar inicialmente una familia y debe incluirse como miembro.
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid
         && request.resource.data.members[request.auth.uid] == true;
       allow read: if isMember(familyId);
-      // La gestión de miembros se reserva para una futura función de invitaciones segura.
-      allow update: if isMember(familyId) && resource.data.ownerId == request.auth.uid;
+      allow update: if isOwner(familyId) || (
+        hasPendingInvite(familyId)
+        && request.resource.data.ownerId == resource.data.ownerId
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['members', 'roles', 'pendingInvitationId'])
+        && request.resource.data.members.diff(resource.data.members).affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.members[request.auth.uid] == true
+        && request.resource.data.roles.diff(resource.data.roles).affectedKeys().hasOnly([request.auth.uid])
+        && request.resource.data.roles[request.auth.uid] == get(/databases/$(database)/documents/families/$(familyId)/invitations/$(request.resource.data.pendingInvitationId)).data.role
+      );
       allow delete: if false;
 
-      match /{document=**} {
-        allow read, create, update: if isMember(familyId);
-        allow delete: if false;
+      match /invitations/{inviteId} {
+        allow get: if isMember(familyId) || (signedIn() && resource.data.email == request.auth.token.email);
+        allow list, create, delete: if isOwner(familyId);
+        allow update: if isOwner(familyId) || (signedIn() && resource.data.email == request.auth.token.email && request.resource.data.status == 'accepted');
       }
+      match /babies/{docId} { allow read: if isMember(familyId); allow create, update: if canEdit(familyId); allow delete: if false; }
+      match /products/{docId} { allow read: if isMember(familyId); allow create, update: if canEdit(familyId); allow delete: if false; }
+      match /movements/{docId} { allow read: if isMember(familyId); allow create, update: if canEdit(familyId); allow delete: if false; }
     }
   }
 }
