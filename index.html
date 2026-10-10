@@ -83,6 +83,7 @@
         <div class="section-heading"><div><p class="eyebrow">ASISTENTE BABYSTOCK</p><h2>Recomendaciones inteligentes</h2></div><span class="assistant-orb">✦</span></div>
         <div id="assistant-insights" class="assistant-insights"></div>
       </section>
+      <section class="section stats-section"><div class="section-heading"><div><p class="eyebrow">PANEL FAMILIAR</p><h2>Estadísticas y proyección</h2></div></div><div id="stats-grid" class="summary-grid"></div><div id="forecast-list" class="assistant-insights"></div></section>
 
       <section class="section inventory-section">
         <div class="section-heading">
@@ -127,6 +128,7 @@
             <label class="field">Unidad<select id="product-unit"><option>unidades</option><option>paquetes</option><option>cajas</option><option>bolsas</option></select></label>
           </div>
           <label class="field">Avisar cuando queden<input id="product-min" type="number" min="0" value="10" required /></label>
+          <div class="two-columns"><label class="field">Precio por unidad (CLP)<input id="product-price" type="number" min="0" value="0" /></label><label class="file-field">Foto del producto<input id="product-image" type="file" accept="image/*" /><span>Agregar foto</span></label></div>
           <label class="field">Notas (opcional)<textarea id="product-notes" rows="2" maxlength="180" placeholder="Marca, lugar de compra, observaciones..."></textarea></label>
           <button class="button primary full" type="submit">Guardar producto</button>
           <button id="archive-product-button" class="text-danger hidden" type="button">Archivar este producto</button>
@@ -137,7 +139,7 @@
     <div id="baby-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="baby-modal-title">
       <div class="modal-card small-modal">
         <div class="modal-heading"><h2 id="baby-modal-title">Agregar bebé</h2><button class="icon-button close-modal" type="button" aria-label="Cerrar">×</button></div>
-        <form id="baby-form"><label class="field">Nombre<input id="baby-name" maxlength="40" required placeholder="Ej.: Sofía" /></label><button class="button primary full" type="submit">Agregar bebé</button></form>
+        <form id="baby-form"><label class="field">Nombre<input id="baby-name" maxlength="40" required placeholder="Ej.: Sofía" /></label><div class="two-columns"><label class="field">Edad (meses)<input id="baby-age" type="number" min="0" placeholder="Ej.: 8" /></label><label class="field">Peso (kg)<input id="baby-weight" type="number" min="0" step="0.1" placeholder="Ej.: 8.2" /></label></div><label class="field">Estatura (cm)<input id="baby-height" type="number" min="0" step="0.1" placeholder="Ej.: 70" /></label><button class="button primary full" type="submit">Agregar bebé</button></form>
       </div>
     </div>
 

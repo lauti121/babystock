@@ -136,7 +136,7 @@ function render() {
   $("low-products").textContent = low.length;
   $("healthy-products").textContent = Math.max(products.length - low.length, 0);
   $("product-count-label").textContent = `${products.length} ${products.length === 1 ? "producto" : "productos"}`;
-  renderAlerts(low); renderAssistant(products, low); renderProducts(products); renderShopping(low); renderMovements();
+  renderAlerts(low); renderAssistant(products, low); renderStats(products); renderProducts(products); renderShopping(low); renderMovements();
   const userEmail = state.user?.email || "Modo local";
   $("account-email").textContent = userEmail;
   $("profile-button").textContent = userEmail === "Modo local" ? "DE" : userEmail.slice(0, 2).toUpperCase();
@@ -153,6 +153,14 @@ function applyPreferences() {
   root.style.setProperty("--accent", colors.accent); root.style.setProperty("--accent-dark", colors.dark); root.style.setProperty("--accent-soft", colors.soft); root.style.setProperty("--accent-quiet", colors.quiet); root.style.setProperty("--hero-a", colors.heroA); root.style.setProperty("--hero-b", colors.heroB); root.style.setProperty("--user-bg", prefs.background ? `url('${prefs.background}')` : "none");
   const initials = (prefs.displayName || "BS").slice(0, 2).toUpperCase(); [$("profile-button"), $("profile-avatar-preview")].forEach((node) => { if (!node) return; node.textContent = initials; node.style.backgroundImage = prefs.avatar ? `url('${prefs.avatar}')` : ""; node.classList.toggle("has-image", !!prefs.avatar); });
 }
+function renderStats(products) {
+  const baby = state.babies.find((b) => b.id === state.activeBabyId) || {}; const since = Date.now() - 30 * 86400000;
+  const moves = state.movements.filter((m) => m.babyId === state.activeBabyId && m.type === "consumo" && m.createdAt >= since);
+  const spent = moves.reduce((sum, m) => sum + Math.abs(m.delta) * Number(state.products.find((p) => p.id === m.productId)?.unitPrice || 0), 0);
+  $("stats-grid").innerHTML = `<article><strong>${baby.ageMonths || "—"}</strong><small>meses</small></article><article><strong>${baby.weightKg || "—"}</strong><small>kg</small></article><article><strong>$${Math.round(spent).toLocaleString("es-CL")}</strong><small>30 días</small></article>`;
+  const lines = products.map((p) => { const used = moves.filter((m) => m.productId === p.id).reduce((s,m) => s + Math.abs(m.delta), 0); const rate = used / 30; return rate ? { p, days: Math.floor(p.quantity / rate), weekly: Math.ceil(rate * 7 * 1.15) } : null; }).filter(Boolean).slice(0,4);
+  $("forecast-list").innerHTML = lines.length ? lines.map((x) => `<div class="insight"><span class="insight-icon">⌁</span><div><strong>${escapeHtml(x.p.name)}: ${x.days} días estimados</strong><p>Stock semanal recomendado: ${x.weekly} ${escapeHtml(x.p.unit)}.</p></div></div>`).join("") : `<p class="empty-list">Registra consumos para generar proyecciones reales.</p>`;
+}
 function renderAlerts(low) {
   const section = $("alerts-section"), list = $("alerts-list");
   section.classList.toggle("hidden", !low.length);
@@ -164,7 +172,7 @@ function renderProducts(products) {
   products.sort((a, b) => Number(isLow(b)) - Number(isLow(a)) || a.name.localeCompare(b.name, "es")).forEach((product) => {
     const fragment = template.content.cloneNode(true); const card = fragment.querySelector(".product-card");
     card.dataset.id = product.id; card.classList.toggle("low", isLow(product));
-    fragment.querySelector(".product-icon").textContent = icons[product.category] || icons.Otros;
+    const icon = fragment.querySelector(".product-icon"); icon.textContent = product.image ? "" : (icons[product.category] || icons.Otros); if (product.image) { icon.style.backgroundImage = `url('${product.image}')`; icon.style.backgroundSize = "cover"; icon.style.backgroundPosition = "center"; }
     fragment.querySelector("h3").textContent = product.name;
     fragment.querySelector(".product-meta").textContent = [product.category, product.size ? `talla ${product.size}` : "", product.notes || ""].filter(Boolean).join(" · ");
     fragment.querySelector(".badge").textContent = isLow(product) ? "REPONER" : "";
@@ -246,12 +254,13 @@ async function saveProfile(event) {
 }
 function openProductModal(product = null) {
   $("product-modal-title").textContent = product ? "Editar producto" : "Nuevo producto";
-  $("product-id").value = product?.id || ""; $("product-name").value = product?.name || ""; $("product-category").value = product?.category || "Pañales"; $("product-size").value = product?.size || ""; $("product-quantity").value = product?.quantity ?? 0; $("product-unit").value = product?.unit || "unidades"; $("product-min").value = product?.minStock ?? 10; $("product-notes").value = product?.notes || ""; $("archive-product-button").classList.toggle("hidden", !product);
+  $("product-id").value = product?.id || ""; $("product-name").value = product?.name || ""; $("product-category").value = product?.category || "Pañales"; $("product-size").value = product?.size || ""; $("product-quantity").value = product?.quantity ?? 0; $("product-unit").value = product?.unit || "unidades"; $("product-min").value = product?.minStock ?? 10; $("product-price").value = product?.unitPrice ?? 0; $("product-image").value = ""; $("product-notes").value = product?.notes || ""; $("archive-product-button").classList.toggle("hidden", !product);
   openModal("product-modal"); $("product-name").focus();
 }
 async function saveProduct(event) {
   event.preventDefault(); const existing = state.products.find((product) => product.id === $("product-id").value); const now = Date.now();
-  const product = { id: existing?.id || uid("product"), babyId: existing?.babyId || state.activeBabyId, name: $("product-name").value.trim(), category: $("product-category").value, size: $("product-size").value.trim(), quantity: Number($("product-quantity").value), unit: $("product-unit").value, minStock: Number($("product-min").value), notes: $("product-notes").value.trim(), archived: false, createdAt: existing?.createdAt || now, updatedAt: now };
+  const product = { id: existing?.id || uid("product"), babyId: existing?.babyId || state.activeBabyId, name: $("product-name").value.trim(), category: $("product-category").value, size: $("product-size").value.trim(), quantity: Number($("product-quantity").value), unit: $("product-unit").value, minStock: Number($("product-min").value), unitPrice: Number($("product-price").value || 0), image: existing?.image || "", notes: $("product-notes").value.trim(), archived: false, createdAt: existing?.createdAt || now, updatedAt: now };
+  if ($("product-image").files[0]) product.image = await resizeImage($("product-image").files[0], 300);
   if (!product.name) return; let movement = null;
   if (existing && product.quantity !== Number(existing.quantity)) movement = { id: uid("move"), babyId: product.babyId, productId: product.id, productName: productLabel(product), type: "ajuste", delta: product.quantity - Number(existing.quantity), createdAt: now, actor: state.user?.email || "Modo local" };
   try { await persistProduct(product, movement); closeModals(); showToast(existing ? "Producto actualizado." : "Producto agregado."); } catch (error) { showToast(error.message || "No se pudo guardar."); }
@@ -262,7 +271,7 @@ async function archiveProduct() {
   try { await persistProduct({ ...product, archived: true, archivedAt: Date.now(), updatedAt: Date.now() }); closeModals(); showToast("Producto archivado. El historial se conserva."); } catch (error) { showToast(error.message || "No se pudo archivar."); }
 }
 async function addBaby(event) {
-  event.preventDefault(); const name = $("baby-name").value.trim(); if (!name) return; const baby = { id: uid("baby"), name, createdAt: Date.now() };
+  event.preventDefault(); const name = $("baby-name").value.trim(); if (!name) return; const baby = { id: uid("baby"), name, ageMonths: Number($("baby-age").value || 0), weightKg: Number($("baby-weight").value || 0), heightCm: Number($("baby-height").value || 0), createdAt: Date.now() };
   try { if (mode === "demo") { state.babies.push(baby); state.activeBabyId = baby.id; saveDemo(); render(); } else await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "babies", baby.id), baby); $("baby-form").reset(); closeModals(); showToast("Bebé agregado."); } catch (error) { showToast(error.message || "No se pudo agregar."); }
 }
 async function archiveBaby() {
