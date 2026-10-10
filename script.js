@@ -65,6 +65,7 @@ async function initFirebase() {
     ]);
     const app = initializeApp(firebaseConfig);
     firebase = { auth: authModule.getAuth(app), db: firestoreModule.getFirestore(app), ...authModule, ...firestoreModule };
+    firebase.googleProvider = new authModule.GoogleAuthProvider();
     $("firebase-hint").textContent = "Accede con la cuenta de tu familia. Ambos teléfonos pueden usar la misma cuenta.";
     firebase.onAuthStateChanged(firebase.auth, async (user) => {
       if (user) {
@@ -270,8 +271,18 @@ async function handleAuth(event) {
   button.disabled = true; button.textContent = registering ? "Creando cuenta..." : "Ingresando...";
   try { if (registering) { creatingAccount = true; const credential = await firebase.createUserWithEmailAndPassword(firebase.auth, email, password); await createFirebaseFamily(credential.user, $("family-name").value.trim() || "Mi familia"); await openFirebaseFamily(credential.user); } else await firebase.signInWithEmailAndPassword(firebase.auth, email, password); } catch (error) { const friendly = { "auth/email-already-in-use": "Este correo ya tiene una cuenta.", "auth/invalid-credential": "Correo o contraseña incorrectos.", "auth/weak-password": "La contraseña debe tener al menos 6 caracteres." }; showToast(friendly[error.code] || "No se pudo acceder. Inténtalo nuevamente."); } finally { creatingAccount = false; button.disabled = false; button.textContent = registering ? "Crear cuenta" : "Ingresar"; }
 }
+async function handleGoogleLogin() {
+  if (!firebase || !firebaseIsConfigured) return showToast("Primero configura Firebase para usar Google.");
+  try { await firebase.signInWithPopup(firebase.auth, firebase.googleProvider); } catch (error) { const messages = { "auth/popup-blocked": "El navegador bloqueó la ventana de Google. Permite las ventanas emergentes e inténtalo otra vez.", "auth/account-exists-with-different-credential": "Ya existe una cuenta con este correo. Ingresa con correo y contraseña primero." }; showToast(messages[error.code] || "No se pudo iniciar sesión con Google."); }
+}
+async function requestNotifications() {
+  if (!("Notification" in window)) return showToast("Este navegador no admite notificaciones.");
+  const permission = await Notification.requestPermission(); const status = $("notifications-status");
+  if (permission === "granted") { localStorage.setItem("babystock-notifications", "enabled"); status.textContent = "Alertas activadas en este dispositivo."; showToast("Recibirás avisos al detectar stock bajo mientras uses la app."); } else { status.textContent = "No se concedió permiso. Puedes activarlo desde la configuración del navegador."; }
+}
 
 $("auth-form").addEventListener("submit", handleAuth);
+$("google-login-button").onclick = handleGoogleLogin;
 $("auth-toggle").onclick = () => { registering = !registering; $("name-field").classList.toggle("hidden", !registering); $("auth-submit").textContent = registering ? "Crear cuenta" : "Ingresar"; $("auth-toggle").textContent = registering ? "¿Ya tienes cuenta? Ingresar" : "¿No tienes cuenta? Crear una"; };
 $("demo-button").onclick = () => { clearSubscriptions(); loadDemo(); showApp(); };
 $("add-product-button").onclick = () => openProductModal(); $("product-form").addEventListener("submit", saveProduct);
@@ -280,6 +291,7 @@ $("add-baby-button").onclick = () => openModal("baby-modal"); $("baby-form").add
 $("baby-select").onchange = (event) => { state.activeBabyId = event.target.value; saveDemo(); render(); };
 $("profile-button").onclick = openProfileModal; $("nav-profile").onclick = openProfileModal; $("profile-form").addEventListener("submit", saveProfile);
 $("invite-form").addEventListener("submit", createInvite); $("join-form").addEventListener("submit", joinFamily);
+$("notifications-button").onclick = requestNotifications;
 document.querySelectorAll(".theme-swatch").forEach((button) => button.onclick = () => { state.preferences = { ...state.preferences, theme: button.dataset.theme }; applyPreferences(); document.querySelectorAll(".theme-swatch").forEach((item) => item.classList.toggle("selected", item === button)); });
 document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = () => { const target = button.dataset.scroll === "shopping" ? $("shopping-list") : appScreen; target.scrollIntoView({ behavior: "smooth" }); });
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
