@@ -1,0 +1,34 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isMember(familyId) {
+      return signedIn()
+        && get(/databases/$(database)/documents/families/$(familyId)).data.members[request.auth.uid] == true;
+    }
+
+    match /users/{userId} {
+      allow create: if signedIn() && request.auth.uid == userId;
+      allow read: if signedIn() && request.auth.uid == userId;
+      // La familia no puede cambiarse desde el cliente después de crear la cuenta.
+      allow update: if signedIn() && request.auth.uid == userId
+        && request.resource.data.familyId == resource.data.familyId;
+      allow delete: if false;
+    }
+
+    match /families/{familyId} {
+      // Solo el creador puede formar inicialmente una familia y debe incluirse como miembro.
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid
+        && request.resource.data.members[request.auth.uid] == true;
+      allow read: if isMember(familyId);
+      // La gestión de miembros se reserva para una futura función de invitaciones segura.
+      allow update: if isMember(familyId) && resource.data.ownerId == request.auth.uid;
+      allow delete: if false;
+
+      match /{document=**} {
+        allow read, create, update: if isMember(familyId);
+        allow delete: if false;
+      }
+    }
+  }
+}
