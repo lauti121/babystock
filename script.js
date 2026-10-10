@@ -100,6 +100,10 @@ async function openFirebaseFamily(user) {
   const familySnapshot = await firebase.getDoc(familyRef);
   if (!familySnapshot.exists()) throw new Error("No se encontró la familia asociada a esta cuenta.");
   state.family = { id: familyId, ...familySnapshot.data() };
+  if (!state.family.roles && state.family.ownerId === user.uid) {
+    await firebase.updateDoc(familyRef, { roles: { [user.uid]: "owner" } });
+    state.family.roles = { [user.uid]: "owner" };
+  }
   state.preferences = { ...state.preferences, ...(userSnapshot.data().preferences || {}) };
   const listen = (path, prop, order = "createdAt") => firebase.onSnapshot(firebase.query(firebase.collection(familyRef, path), firebase.orderBy(order, "desc")), (snapshot) => {
     state[prop] = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
