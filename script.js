@@ -24,6 +24,7 @@ function showToast(message) { toast.textContent = message; toast.classList.add("
 function escapeHtml(value = "") { const div = document.createElement("div"); div.textContent = String(value); return div.innerHTML; }
 function formatDate(timestamp) { if (!timestamp) return "recién"; return new Intl.DateTimeFormat("es-CL", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp)); }
 function productLabel(product) { return `${product.name}${product.size ? ` · talla ${product.size}` : ""}`; }
+function unitLabel(quantity, unit) { const singular = { unidades: "unidad", tarros: "tarro", paquetes: "paquete", cajas: "caja", bolsas: "bolsa" }; return `${quantity} ${Number(quantity) === 1 ? (singular[unit] || unit) : unit}`; }
 function isLow(product) { return Number(product.quantity) <= Number(product.minStock); }
 function activeProducts() { return state.products.filter((p) => p.babyId === state.activeBabyId && !p.archived); }
 
@@ -149,7 +150,7 @@ function purchaseRecommendation(product, data = productConsumption(product)) {
     const target = Math.max(Number(product.minStock || 0), Math.ceil(data.dailyRate * 14 * 1.2));
     return { target, buy: Math.max(0, target - Number(product.quantity)), daysLeft: data.daysLeft, confidence: data.observedDays >= 21 ? "alta" : "media" };
   }
-  const target = Math.max(Number(product.minStock || 0) * 2, Number(product.minStock || 0));
+  const target = Number(product.minStock || 0);
   return { target, buy: Math.max(0, target - Number(product.quantity)), daysLeft: null, confidence: "aprendiendo" };
 }
 function renderAssistant(products, low) {
@@ -161,7 +162,7 @@ function renderAssistant(products, low) {
     if (data.status === "ready") {
       const urgency = data.daysLeft <= 3 ? "Urgente" : data.daysLeft <= 7 ? "Planifica esta compra" : "Mantén tu cobertura";
       const cost = Number(product.unitPrice || 0) && plan.buy ? ` Presupuesto estimado: ${formatCLP(plan.buy * Number(product.unitPrice))}.` : "";
-      return { icon: data.daysLeft <= 3 ? "!" : "⌁", title: `${urgency}: ${product.name}`, text: `Cobertura aproximada: ${Math.max(0, Math.floor(data.daysLeft))} días. Para 14 días con margen, compra ${plan.buy || 0} ${product.unit}.${cost}` };
+      return { icon: data.daysLeft <= 3 ? "!" : "⌁", title: `${urgency}: ${product.name}`, text: `Cobertura aproximada: ${Math.max(0, Math.floor(data.daysLeft))} días. Para 14 días con margen, compra ${unitLabel(plan.buy || 0, product.unit)}.${cost}` };
     }
     return { icon: "⌛", title: `${product.name}: modelo en aprendizaje`, text: `Por ahora usa el mínimo configurado (${product.minStock} ${product.unit}). Registra consumos durante una semana para obtener una recomendación personalizada.` };
   });
@@ -258,7 +259,7 @@ function renderProducts(products) {
 }
 function renderShopping(products, low) {
   const candidates = products.map((product) => { const data = productConsumption(product); const plan = purchaseRecommendation(product, data); return { product, data, plan }; }).filter(({ product, data, plan }) => isLow(product) || plan.buy > 0 || (data.status === "ready" && data.daysLeft <= 14)).sort((a, b) => (a.data.daysLeft ?? 99) - (b.data.daysLeft ?? 99));
-  $("shopping-list").innerHTML = candidates.length ? candidates.map(({ product, data, plan }) => { const coverage = data.status === "ready" ? `Cobertura: ${Math.max(0, Math.floor(data.daysLeft))} días` : `Quedan ${product.quantity} ${product.unit}`; const suggested = plan.buy ? `comprar ${plan.buy}` : `mín. ${product.minStock}`; return `<div class="shopping-item"><span class="shopping-check"></span><div><strong>${escapeHtml(productLabel(product))}</strong><small>${coverage}</small></div><span class="shopping-amount">${suggested}</span></div>`; }).join("") : `<p class="empty-list">¡Todo bien! No hay compras planificadas por ahora.</p>`;
+  $("shopping-list").innerHTML = candidates.length ? candidates.map(({ product, data, plan }) => { const coverage = data.status === "ready" ? `Cobertura: ${Math.max(0, Math.floor(data.daysLeft))} días` : `Quedan ${unitLabel(product.quantity, product.unit)}`; const suggested = plan.buy ? `comprar ${unitLabel(plan.buy, product.unit)}` : `mín. ${unitLabel(product.minStock, product.unit)}`; return `<div class="shopping-item"><span class="shopping-check"></span><div><strong>${escapeHtml(productLabel(product))}</strong><small>${coverage}</small></div><span class="shopping-amount">${suggested}</span></div>`; }).join("") : `<p class="empty-list">¡Todo bien! No hay compras planificadas por ahora.</p>`;
 }
 function renderMovements() {
   const current = state.movements.filter((movement) => movement.babyId === state.activeBabyId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 8);
@@ -391,5 +392,5 @@ document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = 
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
 document.querySelectorAll(".close-modal").forEach((button) => button.onclick = closeModals);
 document.querySelectorAll(".modal").forEach((modal) => modal.addEventListener("click", (event) => { if (event.target === modal) closeModals(); }));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-pro").catch((error) => console.warn("PWA sin caché:", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-pro2").catch((error) => console.warn("PWA sin caché:", error)));
 if (firebaseIsConfigured) initFirebase();
