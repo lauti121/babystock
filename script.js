@@ -6,7 +6,7 @@ let mode = "demo";
 let firebase = null;
 let unsubscribe = [];
 let creatingAccount = false;
-let state = { user: null, family: null, babies: [], products: [], movements: [], activeBabyId: "", preferences: { theme: "rose", displayName: "", bio: "", avatar: "", background: "" } };
+let state = { user: null, family: null, babies: [], products: [], movements: [], activeBabyId: "", preferences: { theme: "rose", accent: "", font: "friendly", scale: "normal", surface: "soft", backgroundOpacity: 22, displayName: "", bio: "", avatar: "", background: "" } };
 const themes = {
   rose: { accent: "#e66c91", dark: "#c34c70", soft: "#ffe4ec", quiet: "#fff3f6", heroA: "#fae2eb", heroB: "#eee2ff" },
   lilac: { accent: "#8d72d8", dark: "#674fb0", soft: "#ece6ff", quiet: "#f7f4ff", heroA: "#ebe5ff", heroB: "#e7f1ff" },
@@ -14,7 +14,7 @@ const themes = {
   sage: { accent: "#5c9a83", dark: "#3f7662", soft: "#dff2e9", quiet: "#f1faf6", heroA: "#def3e9", heroB: "#e7f3ee" },
   sun: { accent: "#d98b57", dark: "#ac6334", soft: "#ffe8d8", quiet: "#fff7f1", heroA: "#ffe6d5", heroB: "#fff0d9" }
 };
-const defaultPreferences = () => ({ theme: "rose", displayName: "", bio: "", avatar: "", background: "" });
+const defaultPreferences = () => ({ theme: "rose", accent: "", font: "friendly", scale: "normal", surface: "soft", backgroundOpacity: 22, displayName: "", bio: "", avatar: "", background: "" });
 
 const $ = (id) => document.getElementById(id);
 const authScreen = $("auth-screen"), appScreen = $("app"), toast = $("toast");
@@ -43,7 +43,7 @@ function sampleData() {
       { id: "m-formula-1", babyId, productId: "p-formula", productName: "Fórmula infantil", type: "consumo", delta: -1, createdAt: Date.now() - 1000 * 60 * 60 * 24 * 12, actor: "Demo" },
       { id: "m-formula-2", babyId, productId: "p-formula", productName: "Fórmula infantil", type: "consumo", delta: -1, createdAt: Date.now() - 1000 * 60 * 60 * 24 * 5, actor: "Demo" }
     ],
-    activeBabyId: babyId, preferences: { theme: "rose", displayName: "", bio: "", avatar: "", background: "" }
+    activeBabyId: babyId, preferences: defaultPreferences()
   };
 }
 
@@ -139,21 +139,42 @@ function render() {
   $("low-products").textContent = low.length;
   $("healthy-products").textContent = Math.max(products.length - low.length, 0);
   $("product-count-label").textContent = `${products.length} ${products.length === 1 ? "producto" : "productos"}`;
-  renderAlerts(low); renderAssistant(products, low); renderStats(products); renderProducts(products); renderShopping(low); renderMovements();
+  renderAlerts(low); renderAssistant(products, low); renderStats(products); renderProducts(products); renderShopping(products, low); renderMovements();
   const userEmail = state.user?.email || "Modo local";
   $("account-email").textContent = userEmail;
   $("profile-button").textContent = userEmail === "Modo local" ? "DE" : userEmail.slice(0, 2).toUpperCase();
 }
+function purchaseRecommendation(product, data = productConsumption(product)) {
+  if (data.status === "ready") {
+    const target = Math.max(Number(product.minStock || 0), Math.ceil(data.dailyRate * 14 * 1.2));
+    return { target, buy: Math.max(0, target - Number(product.quantity)), daysLeft: data.daysLeft, confidence: data.observedDays >= 21 ? "alta" : "media" };
+  }
+  const target = Math.max(Number(product.minStock || 0) * 2, Number(product.minStock || 0));
+  return { target, buy: Math.max(0, target - Number(product.quantity)), daysLeft: null, confidence: "aprendiendo" };
+}
 function renderAssistant(products, low) {
-  const now = Date.now(); const fortnight = now - 14 * 86400000; const insights = [];
-  low.slice(0, 2).forEach((product) => insights.push({ icon: "!", title: `${product.name} necesita reposición`, text: `Tienes ${product.quantity} ${product.unit}. Compra al menos ${Math.max(product.minStock * 2 - product.quantity, product.minStock)} para recuperar un margen cómodo.` }));
-  products.filter((product) => !isLow(product)).forEach((product) => { const used = state.movements.filter((move) => move.productId === product.id && move.type === "consumo" && move.createdAt >= fortnight).reduce((sum, move) => sum + Math.abs(move.delta), 0); if (used > 0) { const days = Math.floor(product.quantity / (used / 14)); if (days <= 7) insights.push({ icon: "⌁", title: `${product.name}: cobertura estimada de ${days} días`, text: `Según el consumo de las últimas dos semanas, considera agregarlo a tu próxima compra.` }); } });
-  if (!insights.length) insights.push({ icon: "✓", title: "Inventario en equilibrio", text: "No hay productos urgentes. Registra los consumos para que las recomendaciones sean cada vez más precisas." });
+  const analyses = products.map((product) => ({ product, data: productConsumption(product), plan: null }));
+  analyses.forEach((item) => { item.plan = purchaseRecommendation(item.product, item.data); });
+  const candidates = analyses.filter(({ product, data, plan }) => isLow(product) || (data.status === "ready" && data.daysLeft <= 7) || plan.buy > 0)
+    .sort((a, b) => (a.plan.daysLeft ?? 99) - (b.plan.daysLeft ?? 99) || b.plan.buy - a.plan.buy);
+  const insights = candidates.slice(0, 2).map(({ product, data, plan }) => {
+    if (data.status === "ready") {
+      const urgency = data.daysLeft <= 3 ? "Urgente" : data.daysLeft <= 7 ? "Planifica esta compra" : "Mantén tu cobertura";
+      const cost = Number(product.unitPrice || 0) && plan.buy ? ` Presupuesto estimado: ${formatCLP(plan.buy * Number(product.unitPrice))}.` : "";
+      return { icon: data.daysLeft <= 3 ? "!" : "⌁", title: `${urgency}: ${product.name}`, text: `Cobertura aproximada: ${Math.max(0, Math.floor(data.daysLeft))} días. Para 14 días con margen, compra ${plan.buy || 0} ${product.unit}.${cost}` };
+    }
+    return { icon: "⌛", title: `${product.name}: modelo en aprendizaje`, text: `Por ahora usa el mínimo configurado (${product.minStock} ${product.unit}). Registra consumos durante una semana para obtener una recomendación personalizada.` };
+  });
+  const reliable = analyses.filter(({ data }) => data.status === "ready").length;
+  if (!insights.length && products.length) insights.push({ icon: reliable ? "✓" : "⌛", title: reliable ? "Inventario bajo control" : "Comenzamos a aprender", text: reliable ? `${reliable} producto${reliable === 1 ? "" : "s"} ya tiene${reliable === 1 ? "" : "n"} una proyección basada en consumo real.` : "Registra los consumos diarios y las recomendaciones se activarán con datos reales." });
+  if (!products.length) insights.push({ icon: "＋", title: "Construye tu primera recomendación", text: "Agrega un producto y define el nivel mínimo para empezar a planificar compras." });
   $("assistant-insights").innerHTML = insights.slice(0, 3).map((item) => `<div class="insight"><span class="insight-icon">${item.icon}</span><div><strong>${escapeHtml(item.title)}</strong><p>${escapeHtml(item.text)}</p></div></div>`).join("");
 }
+function mixHex(hex, mixWith, amount) { const clean = String(hex || "").replace("#", ""); if (!/^[0-9a-f]{6}$/i.test(clean)) return ""; const target = String(mixWith).replace("#", ""); const values = [0, 2, 4].map((i) => Math.round(parseInt(clean.slice(i, i + 2), 16) * (1 - amount) + parseInt(target.slice(i, i + 2), 16) * amount).toString(16).padStart(2, "0")); return `#${values.join("")}`; }
 function applyPreferences() {
-  const prefs = state.preferences || {}; const colors = themes[prefs.theme] || themes.rose; const root = document.documentElement;
-  root.style.setProperty("--accent", colors.accent); root.style.setProperty("--accent-dark", colors.dark); root.style.setProperty("--accent-soft", colors.soft); root.style.setProperty("--accent-quiet", colors.quiet); root.style.setProperty("--hero-a", colors.heroA); root.style.setProperty("--hero-b", colors.heroB); root.style.setProperty("--user-bg", prefs.background ? `url('${prefs.background}')` : "none");
+  const prefs = { ...defaultPreferences(), ...(state.preferences || {}) }; const baseColors = themes[prefs.theme] || themes.rose; const accent = mixHex(prefs.accent, "ffffff", 0) || baseColors.accent; const colors = prefs.accent ? { accent, dark: mixHex(accent, "241b31", .35), soft: mixHex(accent, "ffffff", .84), quiet: mixHex(accent, "ffffff", .94), heroA: mixHex(accent, "ffffff", .72), heroB: mixHex(accent, "eef1ff", .62) } : baseColors; const root = document.documentElement;
+  root.style.setProperty("--accent", colors.accent); root.style.setProperty("--accent-dark", colors.dark); root.style.setProperty("--accent-soft", colors.soft); root.style.setProperty("--accent-quiet", colors.quiet); root.style.setProperty("--hero-a", colors.heroA); root.style.setProperty("--hero-b", colors.heroB); root.style.setProperty("--user-bg", prefs.background ? `url('${prefs.background}')` : "none"); root.style.setProperty("--user-bg-opacity", String(Math.min(45, Math.max(8, Number(prefs.backgroundOpacity || 22))) / 100)); root.dataset.font = prefs.font; root.dataset.scale = prefs.scale; root.dataset.surface = prefs.surface;
+  appScreen.dataset.density = prefs.scale === "compact" ? "compact" : "cozy";
   const initials = (prefs.displayName || "BS").slice(0, 2).toUpperCase(); [$("profile-button"), $("profile-avatar-preview")].forEach((node) => { if (!node) return; node.textContent = initials; node.style.backgroundImage = prefs.avatar ? `url('${prefs.avatar}')` : ""; node.classList.toggle("has-image", !!prefs.avatar); });
 }
 function formatCLP(value) { return `$${Math.round(value || 0).toLocaleString("es-CL")}`; }
@@ -180,6 +201,12 @@ function renderStats(products) {
   const spent30 = recordedConsumption.reduce((sum, item) => sum + item.data.used * Number(item.product.unitPrice || 0), 0);
   const projected4Weeks = allConsumption.reduce((sum, item) => sum + item.data.weekly * 4 * Number(item.product.unitPrice || 0), 0);
   $("stats-grid").innerHTML = `<article><strong>${baby.ageMonths || "—"}</strong><small>meses</small></article><article><strong>${baby.weightKg || "—"}</strong><small>kg</small></article><article><strong>${baby.heightCm || "—"}</strong><small>cm</small></article>`;
+  const plans = analyses.map(({ product, data }) => ({ product, data, plan: purchaseRecommendation(product, data) }));
+  const reliable = plans.filter(({ data }) => data.status === "ready");
+  const shortest = reliable.length ? Math.max(0, Math.floor(Math.min(...reliable.map(({ data }) => data.daysLeft)))) : null;
+  const shoppingBudget = plans.reduce((sum, { product, plan }) => sum + plan.buy * Number(product.unitPrice || 0), 0);
+  const learning = analyses.filter((item) => item.data.status === "learning");
+  $("decision-strip").innerHTML = `<article class="decision-card"><span>Modelo</span><strong>${reliable.length}/${products.length || 0}</strong><small>productos con datos suficientes</small></article><article class="decision-card"><span>Menor cobertura</span><strong>${shortest === null ? "—" : `${shortest}d`}</strong><small>${shortest === null ? "aún recopilando datos" : "producto más cercano a agotarse"}</small></article><article class="decision-card"><span>Compra planificada</span><strong>${shoppingBudget ? formatCLP(shoppingBudget) : "—"}</strong><small>para alcanzar cobertura objetivo</small></article>`;
   $("spending-summary").innerHTML = `<article><strong>${formatCLP(spent30)}</strong><small>consumo valorizado · últimos 30 días</small></article><article><strong>${formatCLP(projected4Weeks)}</strong><small>proyección de gasto · próximas 4 semanas</small></article>`;
 
   const categoryTotals = new Map();
@@ -190,7 +217,6 @@ function renderStats(products) {
   $("category-breakdown").innerHTML = categoryTotals.size ? [...categoryTotals.entries()].sort((a, b) => b[1].spent - a[1].spent).map(([category, total]) => `<div class="category-stat"><strong>${escapeHtml(category)}</strong><span>${total.units.toLocaleString("es-CL")} usados · ${formatCLP(total.spent)}</span></div>`).join("") : `<p class="stats-note">Agrega el precio y registra consumos para convertir tu inventario en estadísticas de gasto reales.</p>`;
 
   const forecasts = allConsumption.sort((a, b) => (a.product.category === "Fórmula" ? -1 : 0) - (b.product.category === "Fórmula" ? -1 : 0) || a.data.daysLeft - b.data.daysLeft).slice(0, 5);
-  const learning = analyses.filter((item) => item.data.status === "learning");
   const formulaWithoutData = analyses.filter((item) => item.product.category === "Fórmula" && item.data.status === "empty").map((item) => item.product);
   const forecastLines = forecasts.map(({ product, data }) => {
     const safeDays = Math.max(0, Math.floor(data.daysLeft));
@@ -230,8 +256,9 @@ function renderProducts(products) {
     list.append(fragment);
   });
 }
-function renderShopping(low) {
-  $("shopping-list").innerHTML = low.length ? low.map((product) => `<div class="shopping-item"><span class="shopping-check"></span><div><strong>${escapeHtml(productLabel(product))}</strong><small>Quedan ${product.quantity} ${escapeHtml(product.unit)}</small></div><span class="shopping-amount">mín. ${product.minStock}</span></div>`).join("") : `<p class="empty-list">¡Todo bien! No hay productos que reponer.</p>`;
+function renderShopping(products, low) {
+  const candidates = products.map((product) => { const data = productConsumption(product); const plan = purchaseRecommendation(product, data); return { product, data, plan }; }).filter(({ product, data, plan }) => isLow(product) || plan.buy > 0 || (data.status === "ready" && data.daysLeft <= 14)).sort((a, b) => (a.data.daysLeft ?? 99) - (b.data.daysLeft ?? 99));
+  $("shopping-list").innerHTML = candidates.length ? candidates.map(({ product, data, plan }) => { const coverage = data.status === "ready" ? `Cobertura: ${Math.max(0, Math.floor(data.daysLeft))} días` : `Quedan ${product.quantity} ${product.unit}`; const suggested = plan.buy ? `comprar ${plan.buy}` : `mín. ${product.minStock}`; return `<div class="shopping-item"><span class="shopping-check"></span><div><strong>${escapeHtml(productLabel(product))}</strong><small>${coverage}</small></div><span class="shopping-amount">${suggested}</span></div>`; }).join("") : `<p class="empty-list">¡Todo bien! No hay compras planificadas por ahora.</p>`;
 }
 function renderMovements() {
   const current = state.movements.filter((movement) => movement.babyId === state.activeBabyId).sort((a, b) => b.createdAt - a.createdAt).slice(0, 8);
@@ -271,11 +298,12 @@ async function changeQuantity(productId, delta, type) {
 function openModal(id) { $(id).classList.remove("hidden"); }
 function closeModals() { document.querySelectorAll(".modal").forEach((modal) => modal.classList.add("hidden")); }
 function openProfileModal() {
-  const prefs = state.preferences || {}; $("profile-display-name").value = prefs.displayName || ""; $("profile-bio").value = prefs.bio || "";
+  const prefs = { ...defaultPreferences(), ...(state.preferences || {}) }; $("profile-display-name").value = prefs.displayName || ""; $("profile-bio").value = prefs.bio || ""; $("profile-font").value = prefs.font; $("profile-scale").value = prefs.scale; $("profile-accent").value = prefs.accent || (themes[prefs.theme] || themes.rose).accent; $("accent-value").textContent = $("profile-accent").value.toUpperCase(); $("background-opacity").value = prefs.backgroundOpacity; $("background-opacity-value").textContent = `${prefs.backgroundOpacity}%`;
   $("profile-name-preview").textContent = prefs.displayName || state.family?.name || "Familia BabyStock";
   const owner = state.family?.ownerId === state.user?.uid; const role = owner ? "Administrador" : (state.family?.roles?.[state.user?.uid] === "viewer" ? "Solo lectura" : "Colaborador");
   $("team-role-label").textContent = role; $("owner-invite-area").classList.toggle("hidden", !owner);
   document.querySelectorAll(".theme-swatch").forEach((button) => button.classList.toggle("selected", button.dataset.theme === (prefs.theme || "rose")));
+  document.querySelectorAll(".surface-option").forEach((button) => button.classList.toggle("selected", button.dataset.surface === prefs.surface));
   applyPreferences(); openModal("profile-modal");
 }
 function invitationCode(inviteId) { return `${state.family.id}:${inviteId}`; }
@@ -293,7 +321,7 @@ function resizeImage(file, maxSize = 520) {
   return new Promise((resolve, reject) => { const reader = new FileReader(); reader.onerror = reject; reader.onload = () => { const image = new Image(); image.onload = () => { const scale = Math.min(1, maxSize / Math.max(image.width, image.height)); const canvas = document.createElement("canvas"); canvas.width = Math.round(image.width * scale); canvas.height = Math.round(image.height * scale); canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height); resolve(canvas.toDataURL("image/jpeg", .78)); }; image.onerror = reject; image.src = reader.result; }; reader.readAsDataURL(file); });
 }
 async function saveProfile(event) {
-  event.preventDefault(); const prefs = { ...state.preferences, displayName: $("profile-display-name").value.trim(), bio: $("profile-bio").value.trim() };
+  event.preventDefault(); const prefs = { ...defaultPreferences(), ...state.preferences, displayName: $("profile-display-name").value.trim(), bio: $("profile-bio").value.trim(), accent: $("profile-accent").value, font: $("profile-font").value, scale: $("profile-scale").value, surface: state.preferences.surface || "soft", backgroundOpacity: Number($("background-opacity").value) };
   try { const avatar = $("profile-image-input").files[0], background = $("background-image-input").files[0]; if (avatar) prefs.avatar = await resizeImage(avatar, 320); if (background) prefs.background = await resizeImage(background, 900); state.preferences = prefs; applyPreferences(); if (mode === "demo") saveDemo(); else await firebase.setDoc(firebase.doc(firebase.db, "users", state.user.uid), { preferences: prefs }, { merge: true }); closeModals(); render(); showToast("Tu estilo se guardó."); } catch { showToast("No se pudo procesar esa imagen. Prueba con otra más pequeña."); }
 }
 function openProductModal(product = null) {
@@ -353,10 +381,15 @@ $("baby-select").onchange = (event) => { state.activeBabyId = event.target.value
 $("profile-button").onclick = openProfileModal; $("nav-profile").onclick = openProfileModal; $("profile-form").addEventListener("submit", saveProfile);
 $("invite-form").addEventListener("submit", createInvite); $("join-form").addEventListener("submit", joinFamily);
 $("notifications-button").onclick = requestNotifications;
-document.querySelectorAll(".theme-swatch").forEach((button) => button.onclick = () => { state.preferences = { ...state.preferences, theme: button.dataset.theme }; applyPreferences(); document.querySelectorAll(".theme-swatch").forEach((item) => item.classList.toggle("selected", item === button)); });
+document.querySelectorAll(".theme-swatch").forEach((button) => button.onclick = () => { const theme = themes[button.dataset.theme] || themes.rose; state.preferences = { ...defaultPreferences(), ...state.preferences, theme: button.dataset.theme, accent: "" }; $("profile-accent").value = theme.accent; $("accent-value").textContent = theme.accent.toUpperCase(); applyPreferences(); document.querySelectorAll(".theme-swatch").forEach((item) => item.classList.toggle("selected", item === button)); });
+document.querySelectorAll(".surface-option").forEach((button) => button.onclick = () => { state.preferences = { ...defaultPreferences(), ...state.preferences, surface: button.dataset.surface }; applyPreferences(); document.querySelectorAll(".surface-option").forEach((item) => item.classList.toggle("selected", item === button)); });
+$("profile-accent").oninput = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, accent: event.target.value }; $("accent-value").textContent = event.target.value.toUpperCase(); applyPreferences(); };
+$("background-opacity").oninput = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, backgroundOpacity: Number(event.target.value) }; $("background-opacity-value").textContent = `${event.target.value}%`; applyPreferences(); };
+$("profile-font").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, font: event.target.value }; applyPreferences(); };
+$("profile-scale").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, scale: event.target.value }; applyPreferences(); };
 document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = () => { const target = button.dataset.scroll === "shopping" ? $("shopping-list") : appScreen; target.scrollIntoView({ behavior: "smooth" }); });
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
 document.querySelectorAll(".close-modal").forEach((button) => button.onclick = closeModals);
 document.querySelectorAll(".modal").forEach((modal) => modal.addEventListener("click", (event) => { if (event.target === modal) closeModals(); }));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-consumption").catch((error) => console.warn("PWA sin caché:", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-pro").catch((error) => console.warn("PWA sin caché:", error)));
 if (firebaseIsConfigured) initFirebase();
