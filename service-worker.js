@@ -1,6 +1,6 @@
 // Incrementar al publicar cambios de interfaz para que la PWA descargue la versión nueva.
-const CACHE = "babystock-v6";
-const ASSETS = ["./", "./index.html", "./style.css", "./script.js?v=20261011-pro2", "./firebase-config.js", "./manifest.json", "./icons/icon.svg"];
+const CACHE = "babystock-v7";
+const ASSETS = ["./", "./index.html", "./style.css", "./script.js?v=20261011-family", "./firebase-config.js", "./manifest.json", "./icons/icon.svg"];
 
 self.addEventListener("install", (event) => event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(ASSETS)).then(() => self.skipWaiting())));
 self.addEventListener("activate", (event) => event.waitUntil(caches.keys().then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)))).then(() => self.clients.claim())));

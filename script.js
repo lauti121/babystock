@@ -6,7 +6,7 @@ let mode = "demo";
 let firebase = null;
 let unsubscribe = [];
 let creatingAccount = false;
-let state = { user: null, family: null, babies: [], products: [], movements: [], activeBabyId: "", preferences: { theme: "rose", accent: "", font: "friendly", scale: "normal", surface: "soft", backgroundOpacity: 22, displayName: "", bio: "", avatar: "", background: "" } };
+let state = { user: null, family: null, babies: [], products: [], movements: [], measurements: [], familyPosts: [], activeBabyId: "", preferences: { theme: "rose", accent: "", font: "friendly", scale: "normal", surface: "soft", backgroundOpacity: 22, displayName: "", bio: "", avatar: "", background: "" } };
 const themes = {
   rose: { accent: "#e66c91", dark: "#c34c70", soft: "#ffe4ec", quiet: "#fff3f6", heroA: "#fae2eb", heroB: "#eee2ff" },
   lilac: { accent: "#8d72d8", dark: "#674fb0", soft: "#ece6ff", quiet: "#f7f4ff", heroA: "#ebe5ff", heroB: "#e7f1ff" },
@@ -27,18 +27,22 @@ function productLabel(product) { return `${product.name}${product.size ? ` · ta
 function unitLabel(quantity, unit) { const singular = { unidades: "unidad", tarros: "tarro", paquetes: "paquete", cajas: "caja", bolsas: "bolsa" }; return `${quantity} ${Number(quantity) === 1 ? (singular[unit] || unit) : unit}`; }
 function isLow(product) { return Number(product.quantity) <= Number(product.minStock); }
 function activeProducts() { return state.products.filter((p) => p.babyId === state.activeBabyId && !p.archived); }
+function localDateInput(timestamp = Date.now()) { return new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
+function ageMonths(baby) { if (baby?.birthDate) { const birth = new Date(`${baby.birthDate}T12:00:00`); const now = new Date(); return Math.max(0, (now.getFullYear() - birth.getFullYear()) * 12 + now.getMonth() - birth.getMonth() - (now.getDate() < birth.getDate() ? 1 : 0)); } return Number(baby?.ageMonths || 0); }
 
 function sampleData() {
   const babyId = "baby-sofia";
   return {
     family: { id: "demo-family", name: "Familia Demo" },
-    babies: [{ id: babyId, name: "Sofía", createdAt: Date.now() }],
+    babies: [{ id: babyId, name: "Sofía", ageMonths: 8, weightKg: 8.2, heightCm: 70, createdAt: Date.now() }],
     products: [
       { id: "p-m", babyId, name: "Pañales Premium", category: "Pañales", size: "M", quantity: 24, unit: "unidades", minStock: 20, notes: "", createdAt: Date.now(), updatedAt: Date.now() },
       { id: "p-g", babyId, name: "Pañales Ultra", category: "Pañales", size: "G", quantity: 8, unit: "unidades", minStock: 15, notes: "", createdAt: Date.now(), updatedAt: Date.now() },
       { id: "p-wipes", babyId, name: "Toallitas húmedas", category: "Toallitas", size: "", quantity: 3, unit: "paquetes", minStock: 3, unitPrice: 2790, notes: "Sin perfume", createdAt: Date.now(), updatedAt: Date.now() },
       { id: "p-formula", babyId, name: "Fórmula infantil", category: "Fórmula", size: "Etapa 1", quantity: 2, unit: "tarros", minStock: 1, unitPrice: 23990, unitContent: 800, notes: "800 g por tarro", createdAt: Date.now(), updatedAt: Date.now() }
     ],
+    measurements: [{ id: "measure-1", babyId, weightKg: 7.8, heightCm: 68, date: localDateInput(Date.now() - 25 * 86400000), note: "Control anterior", createdAt: Date.now() - 25 * 86400000, actor: "Demo" }, { id: "measure-2", babyId, weightKg: 8.2, heightCm: 70, date: localDateInput(), note: "Control actual", createdAt: Date.now(), actor: "Demo" }],
+    familyPosts: [{ id: "post-1", type: "compra", text: "Revisar fórmula antes del fin de semana.", createdAt: Date.now() - 3 * 3600000, actor: "Familia Demo", actorId: "demo" }, { id: "post-2", type: "recuerdo", text: "Hoy Sofía sonrió mucho durante el paseo 💛", createdAt: Date.now() - 26 * 3600000, actor: "Familia Demo", actorId: "demo" }],
     movements: [
       { id: "m-demo", babyId, productId: "p-g", productName: "Pañales Ultra", type: "consumo", delta: -2, createdAt: Date.now() - 1000 * 60 * 90, actor: "Demo" },
       { id: "m-formula-1", babyId, productId: "p-formula", productName: "Fórmula infantil", type: "consumo", delta: -1, createdAt: Date.now() - 1000 * 60 * 60 * 24 * 12, actor: "Demo" },
@@ -51,14 +55,14 @@ function sampleData() {
 function loadDemo() {
   try {
     const saved = JSON.parse(localStorage.getItem(DEMO_KEY));
-    state = saved && saved.babies ? { ...state, ...saved, user: { email: "Modo local" } } : { ...state, ...sampleData(), user: { email: "Modo local" } };
+    state = saved && saved.babies ? { ...state, ...saved, measurements: saved.measurements || [], familyPosts: saved.familyPosts || [], user: { email: "Modo local" } } : { ...state, ...sampleData(), user: { email: "Modo local" } };
   } catch { state = { ...state, ...sampleData(), user: { email: "Modo local" } }; }
   mode = "demo";
 }
 function saveDemo() {
   if (mode !== "demo") return;
-  const { family, babies, products, movements, activeBabyId, preferences } = state;
-  localStorage.setItem(DEMO_KEY, JSON.stringify({ family, babies, products, movements, activeBabyId, preferences }));
+  const { family, babies, products, movements, measurements, familyPosts, activeBabyId, preferences } = state;
+  localStorage.setItem(DEMO_KEY, JSON.stringify({ family, babies, products, movements, measurements, familyPosts, activeBabyId, preferences }));
 }
 
 async function initFirebase() {
@@ -116,7 +120,7 @@ async function openFirebaseFamily(user) {
     if (prop === "babies" && (!state.activeBabyId || !state.babies.some((b) => b.id === state.activeBabyId && !b.archived))) state.activeBabyId = state.babies.find((b) => !b.archived)?.id || "";
     render();
   }, (error) => { console.error(error); showToast("No se pudieron actualizar los datos. Revisa las reglas de Firestore."); });
-  unsubscribe = [listen("babies", "babies"), listen("products", "products", "updatedAt"), listen("movements", "movements")];
+  unsubscribe = [listen("babies", "babies"), listen("products", "products", "updatedAt"), listen("movements", "movements"), listen("measurements", "measurements"), listen("familyPosts", "familyPosts", "createdAt")];
   showApp();
 }
 function clearSubscriptions() { unsubscribe.forEach((stop) => stop()); unsubscribe = []; }
@@ -140,10 +144,34 @@ function render() {
   $("low-products").textContent = low.length;
   $("healthy-products").textContent = Math.max(products.length - low.length, 0);
   $("product-count-label").textContent = `${products.length} ${products.length === 1 ? "producto" : "productos"}`;
-  renderAlerts(low); renderAssistant(products, low); renderStats(products); renderProducts(products); renderShopping(products, low); renderMovements();
+  renderStockConsultation(); renderGrowth(); renderAlerts(low); renderAssistant(products, low); renderStats(products); renderProducts(products); renderShopping(products, low); renderMovements(); renderFamilyFeed();
   const userEmail = state.user?.email || "Modo local";
   $("account-email").textContent = userEmail;
   $("profile-button").textContent = userEmail === "Modo local" ? "DE" : userEmail.slice(0, 2).toUpperCase();
+}
+function renderStockConsultation(query = $("stock-consult-input")?.value || "") {
+  const result = $("stock-consult-result"); if (!result) return;
+  const products = activeProducts(); const normalized = query.trim().toLocaleLowerCase("es-CL");
+  if (!normalized) { result.innerHTML = `<p class="stats-note">Pregunta por un producto: “pañales”, “fórmula” o “¿qué comprar?”.</p>`; return; }
+  const wantsShopping = /compr|falta|reponer|necesit/.test(normalized);
+  const aliases = { pañal: "pañales", panal: "pañales", toallita: "toallitas", formula: "fórmula", comida: "comida", higiene: "higiene" };
+  const matches = wantsShopping ? products.filter(isLow) : products.filter((product) => { const haystack = `${product.name} ${product.category} ${product.size || ""}`.toLocaleLowerCase("es-CL"); return normalized.split(/\s+/).some((term) => haystack.includes(aliases[term] || term)); });
+  if (!matches.length) { result.innerHTML = `<p class="stats-note">No encontré productos que coincidan. Prueba con “pañales”, “toallitas” o el nombre del producto.</p>`; return; }
+  result.innerHTML = matches.slice(0, 4).map((product) => { const data = productConsumption(product); const coverage = data.status === "ready" ? ` · aprox. ${Math.max(0, Math.floor(data.daysLeft))} días de cobertura` : ""; return `<div class="consult-answer"><span class="insight-icon">${icons[product.category] || "◌"}</span><div><strong>${escapeHtml(product.name)}: ${unitLabel(product.quantity, product.unit)}</strong><small>${isLow(product) ? "Está bajo el mínimo" : "Stock en nivel actual"}${coverage}</small></div></div>`; }).join("");
+}
+function renderGrowth() {
+  const baby = state.babies.find((item) => item.id === state.activeBabyId); const summary = $("growth-summary"); const trend = $("growth-trend"); if (!baby || !summary || !trend) return;
+  const records = (state.measurements || []).filter((item) => item.babyId === baby.id).sort((a, b) => b.createdAt - a.createdAt);
+  const latest = records[0] || baby; const previous = records[1]; const weight = Number(latest.weightKg || baby.weightKg || 0); const height = Number(latest.heightCm || baby.heightCm || 0); const months = ageMonths(baby);
+  summary.innerHTML = `<div><strong>${months || "—"}</strong><small>meses</small></div><div><strong>${weight || "—"}</strong><small>kg</small></div><div><strong>${height || "—"}</strong><small>cm</small></div>`;
+  const weightChange = previous && weight && previous.weightKg ? weight - Number(previous.weightKg) : null; const heightChange = previous && height && previous.heightCm ? height - Number(previous.heightCm) : null;
+  if (!records.length) trend.textContent = "Aún no hay mediciones. Actualiza peso o estatura para iniciar el seguimiento.";
+  else if (weightChange !== null || heightChange !== null) trend.textContent = `Último registro: ${latest.date || formatDate(latest.createdAt)}${weightChange !== null ? ` · ${weightChange >= 0 ? "+" : ""}${weightChange.toFixed(2)} kg desde la medición anterior` : ""}${heightChange !== null ? ` · ${heightChange >= 0 ? "+" : ""}${heightChange.toFixed(1)} cm` : ""}.`;
+  else trend.textContent = `Último registro: ${latest.date || formatDate(latest.createdAt)}. Agrega otra medición para ver la evolución.`;
+}
+function renderFamilyFeed() {
+  const feed = $("family-feed"); if (!feed) return; const labels = { nota: "Nota", compra: "Compra", recuerdo: "Recuerdo" }; const posts = (state.familyPosts || []).slice(0, 20);
+  feed.innerHTML = posts.length ? posts.map((post) => `<article class="family-post"><div class="post-meta"><span><span class="post-type">${labels[post.type] || "Nota"}</span> · ${escapeHtml(post.actor || "Familia")}</span><span>${formatDate(post.createdAt)}</span></div><p>${escapeHtml(post.text)}</p></article>`).join("") : `<p class="empty-list">Aún no hay notas. Dejen la primera para su familia.</p>`;
 }
 function purchaseRecommendation(product, data = productConsumption(product)) {
   if (data.status === "ready") {
@@ -343,9 +371,28 @@ async function archiveProduct() {
   if (!window.confirm(`¿Archivar “${product.name}”? No se borrará el historial.`)) return;
   try { await persistProduct({ ...product, archived: true, archivedAt: Date.now(), updatedAt: Date.now() }); closeModals(); showToast("Producto archivado. El historial se conserva."); } catch (error) { showToast(error.message || "No se pudo archivar."); }
 }
+function openBabyDataModal() {
+  const baby = state.babies.find((item) => item.id === state.activeBabyId); if (!baby) return showToast("Primero agrega o selecciona un bebé.");
+  $("edit-baby-name").value = baby.name || ""; $("edit-baby-birthdate").value = baby.birthDate || ""; $("edit-baby-weight").value = baby.weightKg ?? ""; $("edit-baby-height").value = baby.heightCm ?? ""; $("edit-measurement-date").value = localDateInput(); $("edit-measurement-note").value = ""; openModal("baby-data-modal");
+}
+async function saveBabyData(event) {
+  event.preventDefault(); const current = state.babies.find((item) => item.id === state.activeBabyId); if (!current) return;
+  const name = $("edit-baby-name").value.trim(); const birthDate = $("edit-baby-birthdate").value; const weightKg = Number($("edit-baby-weight").value || 0); const heightCm = Number($("edit-baby-height").value || 0); const date = $("edit-measurement-date").value; const note = $("edit-measurement-note").value.trim(); const measuredAt = new Date(`${date}T12:00:00`).getTime(); const baby = { ...current, name, birthDate: birthDate || "", weightKg: weightKg || 0, heightCm: heightCm || 0, ageMonths: birthDate ? ageMonths({ birthDate }) : Number(current.ageMonths || 0), updatedAt: Date.now() };
+  const measurement = (weightKg || heightCm) ? { id: uid("measure"), babyId: current.id, weightKg, heightCm, date, note, createdAt: measuredAt, actor: state.preferences?.displayName || state.user?.email || "Familia" } : null;
+  try {
+    if (mode === "demo") { state.babies = state.babies.map((item) => item.id === current.id ? baby : item); if (measurement) state.measurements = [measurement, ...(state.measurements || [])]; saveDemo(); render(); }
+    else { const familyRef = firebase.doc(firebase.db, "families", state.family.id); const batch = firebase.writeBatch(firebase.db); batch.set(firebase.doc(familyRef, "babies", current.id), baby, { merge: true }); if (measurement) batch.set(firebase.doc(familyRef, "measurements", measurement.id), measurement); await batch.commit(); }
+    closeModals(); showToast(measurement ? "Seguimiento guardado." : "Datos del bebé actualizados.");
+  } catch (error) { showToast(error.message || "No se pudo guardar el seguimiento."); }
+}
+async function publishFamilyPost(event) {
+  event.preventDefault(); const text = $("family-post-text").value.trim(); if (!text) return; const post = { id: uid("post"), type: $("family-post-type").value, text, createdAt: Date.now(), actor: state.preferences?.displayName || state.user?.email || "Familia", actorId: state.user?.uid || "demo" };
+  try { if (mode === "demo") { state.familyPosts = [post, ...(state.familyPosts || [])]; saveDemo(); render(); } else await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "familyPosts", post.id), post); $("family-post-text").value = ""; showToast("Publicado para tu familia."); } catch (error) { showToast(error.message || "No se pudo publicar la nota."); }
+}
 async function addBaby(event) {
   event.preventDefault(); const name = $("baby-name").value.trim(); if (!name) return; const baby = { id: uid("baby"), name, ageMonths: Number($("baby-age").value || 0), weightKg: Number($("baby-weight").value || 0), heightCm: Number($("baby-height").value || 0), createdAt: Date.now() };
-  try { if (mode === "demo") { state.babies.push(baby); state.activeBabyId = baby.id; saveDemo(); render(); } else await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "babies", baby.id), baby); $("baby-form").reset(); closeModals(); showToast("Bebé agregado."); } catch (error) { showToast(error.message || "No se pudo agregar."); }
+  const measurement = (baby.weightKg || baby.heightCm) ? { id: uid("measure"), babyId: baby.id, weightKg: baby.weightKg, heightCm: baby.heightCm, date: localDateInput(), note: "Medición inicial", createdAt: Date.now(), actor: state.preferences?.displayName || state.user?.email || "Familia" } : null;
+  try { if (mode === "demo") { state.babies.push(baby); if (measurement) state.measurements = [measurement, ...(state.measurements || [])]; state.activeBabyId = baby.id; saveDemo(); render(); } else { const familyRef = firebase.doc(firebase.db, "families", state.family.id); const batch = firebase.writeBatch(firebase.db); batch.set(firebase.doc(familyRef, "babies", baby.id), baby); if (measurement) batch.set(firebase.doc(familyRef, "measurements", measurement.id), measurement); await batch.commit(); } $("baby-form").reset(); closeModals(); showToast("Bebé agregado."); } catch (error) { showToast(error.message || "No se pudo agregar."); }
 }
 async function archiveBaby() {
   const baby = state.babies.find((item) => item.id === state.activeBabyId); if (!baby) return showToast("No hay un bebé activo para archivar.");
@@ -378,7 +425,12 @@ $("add-product-button").onclick = () => openProductModal(); $("product-form").ad
 $("archive-product-button").onclick = archiveProduct;
 $("add-baby-button").onclick = () => openModal("baby-modal"); $("baby-form").addEventListener("submit", addBaby);
 $("archive-baby-button").onclick = archiveBaby;
+$("edit-baby-data-button").onclick = openBabyDataModal; $("baby-data-form").addEventListener("submit", saveBabyData);
 $("baby-select").onchange = (event) => { state.activeBabyId = event.target.value; saveDemo(); render(); };
+$("stock-consult-form").addEventListener("submit", (event) => { event.preventDefault(); renderStockConsultation(); });
+$("stock-consult-input").addEventListener("input", () => renderStockConsultation());
+document.querySelectorAll("[data-query]").forEach((button) => button.onclick = () => { $("stock-consult-input").value = button.dataset.query; renderStockConsultation(button.dataset.query); });
+$("family-post-form").addEventListener("submit", publishFamilyPost);
 $("profile-button").onclick = openProfileModal; $("nav-profile").onclick = openProfileModal; $("profile-form").addEventListener("submit", saveProfile);
 $("invite-form").addEventListener("submit", createInvite); $("join-form").addEventListener("submit", joinFamily);
 $("notifications-button").onclick = requestNotifications;
@@ -388,9 +440,9 @@ $("profile-accent").oninput = (event) => { state.preferences = { ...defaultPrefe
 $("background-opacity").oninput = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, backgroundOpacity: Number(event.target.value) }; $("background-opacity-value").textContent = `${event.target.value}%`; applyPreferences(); };
 $("profile-font").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, font: event.target.value }; applyPreferences(); };
 $("profile-scale").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, scale: event.target.value }; applyPreferences(); };
-document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = () => { const target = button.dataset.scroll === "shopping" ? $("shopping-list") : appScreen; target.scrollIntoView({ behavior: "smooth" }); });
+document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = () => { const target = button.dataset.scroll === "shopping" ? $("shopping-list") : button.dataset.scroll === "family" ? $("family-space-section") : appScreen; target.scrollIntoView({ behavior: "smooth" }); });
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
 document.querySelectorAll(".close-modal").forEach((button) => button.onclick = closeModals);
 document.querySelectorAll(".modal").forEach((modal) => modal.addEventListener("click", (event) => { if (event.target === modal) closeModals(); }));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-pro2").catch((error) => console.warn("PWA sin caché:", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-family").catch((error) => console.warn("PWA sin caché:", error)));
 if (firebaseIsConfigured) initFirebase();

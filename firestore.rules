@@ -45,6 +45,13 @@ service cloud.firestore {
       match /babies/{docId} { allow read: if isMember(familyId); allow create, update: if canEdit(familyId); allow delete: if false; }
       match /products/{docId} { allow read: if isMember(familyId); allow create, update: if canEdit(familyId); allow delete: if false; }
       match /movements/{docId} { allow read: if isMember(familyId); allow create, update: if canEdit(familyId); allow delete: if false; }
+      match /measurements/{docId} { allow read: if isMember(familyId); allow create, update: if canEdit(familyId); allow delete: if false; }
+      match /familyPosts/{docId} {
+        allow read: if isMember(familyId);
+        allow create: if canEdit(familyId) && request.resource.data.actorId == request.auth.uid;
+        allow update: if isOwner(familyId);
+        allow delete: if false;
+      }
     }
   }
 }
