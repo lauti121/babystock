@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BabyStock</string>
+    <string name="title_activity_main">BabyStock</string>
+    <string name="package_name">com.babystock.familia</string>
+    <string name="custom_url_scheme">com.babystock.familia</string>
+</resources>

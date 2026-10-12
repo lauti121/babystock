@@ -1,0 +1,15 @@
+{
+  "appId": "com.babystock.familia",
+  "appName": "BabyStock",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#fffaf8",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "FirebaseAuthentication": {
+      "skipNativeAuth": true,
+      "providers": ["google.com"]
+    }
+  }
+}

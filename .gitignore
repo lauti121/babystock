@@ -2,4 +2,6 @@
 firebase-service-account*.json
 google-credentials*.json
 node_modules/
+android/app/google-services.json
+www/
 

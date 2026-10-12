@@ -1,4 +1,5 @@
-import { firebaseConfig, firebaseIsConfigured, firebaseMessagingIsConfigured, firebaseMessagingVapidKey } from "./firebase-config.js";
+import { firebaseConfig, firebaseIsConfigured } from "./firebase-config.js";
+import { notificationsConfig, notificationsAreConfigured } from "./notifications-config.js";
 
 const DEMO_KEY = "babystock-demo-v1";
 const icons = { "Pañales": "▣", "Toallitas": "≈", "Fórmula": "◉", "Comida": "◒", "Higiene": "✦", "Otros": "◌" };
@@ -18,6 +19,8 @@ const themes = {
 const defaultPreferences = () => ({ theme: "rose", accent: "", font: "friendly", scale: "normal", surface: "soft", backgroundOpacity: 22, displayName: "", bio: "", avatar: "", background: "" });
 
 const $ = (id) => document.getElementById(id);
+const isNativeApp = () => Boolean(window.BabyStockNativePush?.isNative?.());
+const familyPushId = () => `babystock:${state.family?.id}:${state.user?.uid}`;
 const authScreen = $("auth-screen"), appScreen = $("app"), toast = $("toast");
 
 function uid(prefix = "id") { return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`; }
@@ -78,19 +81,14 @@ function saveDemo() {
 
 async function initFirebase() {
   try {
-    const [{ initializeApp }, authModule, firestoreModule, messagingModule] = await Promise.all([
+    const [{ initializeApp }, authModule, firestoreModule] = await Promise.all([
       import("https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js"),
       import("https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js"),
-      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js"),
-      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-messaging.js")
+      import("https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js")
     ]);
     const app = initializeApp(firebaseConfig);
-    firebase = { auth: authModule.getAuth(app), db: firestoreModule.getFirestore(app), ...authModule, ...firestoreModule, ...messagingModule };
+    firebase = { auth: authModule.getAuth(app), db: firestoreModule.getFirestore(app), ...authModule, ...firestoreModule };
     firebase.googleProvider = new authModule.GoogleAuthProvider();
-    if (await messagingModule.isSupported()) {
-      firebase.messaging = messagingModule.getMessaging(app);
-      messagingModule.onMessage(firebase.messaging, showForegroundNotification);
-    }
     $("firebase-hint").textContent = "Accede con la cuenta de tu familia. Ambos teléfonos pueden usar la misma cuenta.";
     firebase.onAuthStateChanged(firebase.auth, async (user) => {
       if (user) {
@@ -137,6 +135,7 @@ async function openFirebaseFamily(user) {
     render();
   }, (error) => { console.error(error); showToast("No se pudieron actualizar los datos. Revisa las reglas de Firestore."); });
   unsubscribe = [listen("babies", "babies"), listen("products", "products", "updatedAt"), listen("movements", "movements"), listen("measurements", "measurements"), listen("familyPosts", "familyPosts", "createdAt")];
+  identifyPushDevice();
   showApp();
 }
 function clearSubscriptions() { unsubscribe.forEach((stop) => stop()); unsubscribe = []; }
@@ -328,6 +327,25 @@ async function persistProduct(product, movement = null) {
   await firebase.setDoc(firebase.doc(familyRef, "products", product.id), product, { merge: true });
   if (movement) await firebase.setDoc(firebase.doc(familyRef, "movements", movement.id), movement);
 }
+
+async function identifyPushDevice() {
+  if (mode !== "firebase" || !state.family?.id || !state.user?.uid || !window.BabyStockNativePush?.isConfigured?.()) return;
+  try { await window.BabyStockNativePush.identify(familyPushId()); } catch (error) { console.warn("No se pudo identificar el dispositivo para alertas:", error); }
+}
+
+async function notifyFamily({ event, title, body }) {
+  if (mode !== "firebase" || !notificationsAreConfigured || !state.family?.id || !state.user) return;
+  try {
+    const token = await state.user.getIdToken();
+    const response = await fetch(`${notificationsConfig.workerUrl.replace(/\/$/, "")}/notify`, {
+      method: "POST",
+      headers: { "content-type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ familyId: state.family.id, event, title, body })
+    });
+    if (!response.ok) console.warn("La alerta familiar no pudo enviarse.", await response.text());
+  } catch (error) { console.warn("La alerta familiar no pudo enviarse.", error); }
+}
+
 async function changeQuantity(productId, delta, type) {
   const original = state.products.find((product) => product.id === productId); if (!original) return;
   const quantity = Math.max(0, Number(original.quantity) + delta); const actualDelta = quantity - Number(original.quantity);
@@ -345,6 +363,9 @@ async function changeQuantity(productId, delta, type) {
         transaction.set(firebase.doc(firebase.db, "families", state.family.id, "movements", movement.id), { ...movement, delta: applied });
       });
     } else await persistProduct(product, movement);
+    if (delta < 0 && !isLow(original) && isLow(product)) {
+      notifyFamily({ event: "low-stock", title: "BabyStock · Stock bajo", body: `${productLabel(product)} quedó en ${unitLabel(product.quantity, product.unit)}.` });
+    }
   } catch (error) { showToast(error.message || "No se pudo actualizar el producto."); }
 }
 
@@ -411,7 +432,15 @@ async function saveBabyData(event) {
 }
 async function publishFamilyPost(event) {
   event.preventDefault(); const text = $("family-post-text").value.trim(); if (!text) return; const post = { id: uid("post"), type: $("family-post-type").value, text, createdAt: Date.now(), actor: state.preferences?.displayName || state.user?.email || "Familia", actorId: state.user?.uid || "demo" };
-  try { if (mode === "demo") { state.familyPosts = [post, ...(state.familyPosts || [])]; saveDemo(); render(); } else await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "familyPosts", post.id), post); $("family-post-text").value = ""; showToast("Publicado para tu familia."); } catch (error) { showToast(error.message || "No se pudo publicar la nota."); }
+  try {
+    if (mode === "demo") { state.familyPosts = [post, ...(state.familyPosts || [])]; saveDemo(); render(); }
+    else {
+      await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "familyPosts", post.id), post);
+      const labels = { nota: "Nueva nota familiar", compra: "Pendiente de compra", recuerdo: "Nuevo recuerdo" };
+      notifyFamily({ event: "family-post", title: `BabyStock · ${labels[post.type] || "Actualización familiar"}`, body: text });
+    }
+    $("family-post-text").value = ""; showToast("Publicado para tu familia.");
+  } catch (error) { showToast(error.message || "No se pudo publicar la nota."); }
 }
 async function addBaby(event) {
   event.preventDefault(); const name = $("baby-name").value.trim(), birthDate = $("baby-birthdate").value; if (!name || !birthDate) return; if (new Date(`${birthDate}T12:00:00`) > new Date()) return showToast("La fecha de nacimiento no puede ser futura."); const baby = { id: uid("baby"), name, birthDate, ageMonths: ageMonths({ birthDate }), weightKg: Number($("baby-weight").value || 0), heightCm: Number($("baby-height").value || 0), createdAt: Date.now() };
@@ -433,29 +462,31 @@ async function handleAuth(event) {
 }
 async function handleGoogleLogin() {
   if (!firebase || !firebaseIsConfigured) return showToast("Primero configura Firebase para usar Google.");
-  try { await firebase.signInWithPopup(firebase.auth, firebase.googleProvider); } catch (error) { const messages = { "auth/popup-blocked": "El navegador bloqueó la ventana de Google. Permite las ventanas emergentes e inténtalo otra vez.", "auth/account-exists-with-different-credential": "Ya existe una cuenta con este correo. Ingresa con correo y contraseña primero." }; showToast(messages[error.code] || "No se pudo iniciar sesión con Google."); }
-}
-function showForegroundNotification(payload) {
-  const title = payload?.data?.title || payload?.notification?.title || "BabyStock"; const body = payload?.data?.body || payload?.notification?.body || "Tienes una actualización familiar.";
-  showToast(`${title}: ${body}`);
-  if (document.hidden && Notification.permission === "granted") new Notification(title, { body, icon: "./icons/icon.svg" });
+  try {
+    if (isNativeApp()) {
+      const result = await window.BabyStockNativeAuth?.signInWithGoogle?.();
+      const credential = firebase.GoogleAuthProvider.credential(result?.credential?.idToken, result?.credential?.accessToken);
+      await firebase.signInWithCredential(firebase.auth, credential);
+    } else await firebase.signInWithPopup(firebase.auth, firebase.googleProvider);
+  } catch (error) { const messages = { "auth/popup-blocked": "El navegador bloqueó la ventana de Google. Permite las ventanas emergentes e inténtalo otra vez.", "auth/account-exists-with-different-credential": "Ya existe una cuenta con este correo. Ingresa con correo y contraseña primero." }; showToast(messages[error.code] || "No se pudo iniciar sesión con Google."); }
 }
 async function requestNotifications() {
   const status = $("notifications-status");
   if (mode !== "firebase" || !firebase || !state.family?.id) return showToast("Inicia sesión con tu familia para activar alertas reales.");
-  if (!("Notification" in window) || !("serviceWorker" in navigator)) return showToast("Este navegador no admite notificaciones push.");
-  if (!firebaseMessagingIsConfigured) { status.textContent = "Falta configurar la clave Web Push (VAPID) de Firebase."; return showToast("Falta completar la configuración de notificaciones push."); }
-  if (!firebase.messaging) { status.textContent = "Este navegador no puede recibir notificaciones push."; return showToast("No se pudo iniciar Firebase Messaging en este navegador."); }
+  if (!isNativeApp()) {
+    status.textContent = "Las alertas con la app cerrada están disponibles en la aplicación Android BabyStock.";
+    return showToast("Instala el APK de BabyStock para activar alertas push gratuitas.");
+  }
+  if (!notificationsAreConfigured || !window.BabyStockNativePush?.isConfigured?.()) {
+    status.textContent = "Falta terminar la configuración privada de OneSignal y Cloudflare.";
+    return showToast("El administrador aún debe terminar la configuración de alertas.");
+  }
   try {
-    const permission = await Notification.requestPermission();
-    if (permission !== "granted") { status.textContent = "No se concedió permiso. Puedes activarlo desde la configuración del navegador."; return; }
-    const registration = await navigator.serviceWorker.ready;
-    const token = await firebase.getToken(firebase.messaging, { vapidKey: firebaseMessagingVapidKey, serviceWorkerRegistration: registration });
-    if (!token) { status.textContent = "No se generó un identificador para este teléfono."; return showToast("No se pudo activar este dispositivo."); }
-    const deviceId = localStorage.getItem("babystock-push-device") || uid("device"); localStorage.setItem("babystock-push-device", deviceId);
-    await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "devices", deviceId), { userId: state.user.uid, token, enabled: true, platform: "web", updatedAt: Date.now() }, { merge: true });
-    status.textContent = "Alertas push activadas en este teléfono."; showToast("Este teléfono recibirá alertas familiares incluso con la app cerrada.");
-  } catch (error) { console.error(error); status.textContent = "No se pudo activar este dispositivo."; showToast(error.code === "messaging/permission-blocked" ? "El navegador bloqueó las notificaciones." : "No se pudieron activar las alertas push."); }
+    const result = await window.BabyStockNativePush.requestPermission(familyPushId());
+    if (!result.ok) { status.textContent = "No se concedió permiso. Puedes activarlo desde Ajustes de Android."; return; }
+    status.textContent = "Alertas push activadas en este teléfono.";
+    showToast("Este teléfono recibirá alertas familiares incluso con la app cerrada.");
+  } catch (error) { console.error(error); status.textContent = "No se pudo activar este dispositivo."; showToast("Revisa el permiso de notificaciones de Android e inténtalo otra vez."); }
 }
 
 $("auth-form").addEventListener("submit", handleAuth);
@@ -482,8 +513,8 @@ $("background-opacity").oninput = (event) => { state.preferences = { ...defaultP
 $("profile-font").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, font: event.target.value }; applyPreferences(); };
 $("profile-scale").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, scale: event.target.value }; applyPreferences(); };
 document.querySelectorAll("[data-view-target]").forEach((button) => button.onclick = () => showView(button.dataset.viewTarget));
-$("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
+$("logout-button").onclick = async () => { closeModals(); try { await window.BabyStockNativePush?.clearIdentity?.(); } catch (error) { console.warn("No se pudo cerrar la sesión de alertas:", error); } if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
 document.querySelectorAll(".close-modal").forEach((button) => button.onclick = closeModals);
 document.querySelectorAll(".modal").forEach((modal) => modal.addEventListener("click", (event) => { if (event.target === modal) closeModals(); }));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-push").catch((error) => console.warn("PWA sin caché:", error)));
+if ("serviceWorker" in navigator && !isNativeApp()) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261012-mobile").catch((error) => console.warn("PWA sin caché:", error)));
 if (firebaseIsConfigured) initFirebase();

@@ -1,6 +1,6 @@
-# Activar notificaciones push de BabyStock
+# Configuración anterior de Firebase Messaging
 
-La interfaz ya está preparada para recibir notificaciones. Para que una publicación llegue a otro teléfono, completa esta configuración una sola vez.
+Esta configuración usa Cloud Functions y requiere Blaze. No la uses si quieres mantener BabyStock sin facturación. La ruta recomendada es [ANDROID_GRATIS.md](ANDROID_GRATIS.md): Android + OneSignal + Cloudflare Worker gratuito.
 
 1. En Firebase Console abre **Configuración del proyecto > Cloud Messaging**. En **Certificados Web Push**, genera un par de claves y copia la **clave pública**.
 2. Pega esa clave en `firebase-config.js`, en `firebaseMessagingVapidKey`. No pegues claves privadas ni cuentas de servicio.

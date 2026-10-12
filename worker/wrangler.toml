@@ -1,0 +1,6 @@
+name = "babystock-alerts"
+main = "src/index.js"
+compatibility_date = "2026-10-11"
+
+[vars]
+FIREBASE_PROJECT_ID = "babystock-6789b"
