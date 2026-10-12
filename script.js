@@ -29,13 +29,23 @@ function unitLabel(quantity, unit) { const singular = { unidades: "unidad", tarr
 function isLow(product) { return Number(product.quantity) <= Number(product.minStock); }
 function activeProducts() { return state.products.filter((p) => p.babyId === state.activeBabyId && !p.archived); }
 function localDateInput(timestamp = Date.now()) { return new Date(timestamp - new Date(timestamp).getTimezoneOffset() * 60000).toISOString().slice(0, 10); }
-function ageMonths(baby) { if (baby?.birthDate) { const birth = new Date(`${baby.birthDate}T12:00:00`); const now = new Date(); return Math.max(0, (now.getFullYear() - birth.getFullYear()) * 12 + now.getMonth() - birth.getMonth() - (now.getDate() < birth.getDate() ? 1 : 0)); } return Number(baby?.ageMonths || 0); }
+function ageDetails(baby, reference = new Date()) {
+  if (!baby?.birthDate) { const totalMonths = Number(baby?.ageMonths || 0); return { years: Math.floor(totalMonths / 12), months: totalMonths % 12, days: null, totalMonths, exact: false }; }
+  const [year, month, day] = baby.birthDate.split("-").map(Number); const birth = new Date(year, month - 1, day); const today = new Date(reference.getFullYear(), reference.getMonth(), reference.getDate());
+  if (!year || !month || !day || birth > today) return { years: 0, months: 0, days: 0, totalMonths: 0, exact: false };
+  let years = today.getFullYear() - year, months = today.getMonth() - (month - 1), days = today.getDate() - day;
+  if (days < 0) { months -= 1; days += new Date(today.getFullYear(), today.getMonth(), 0).getDate(); }
+  if (months < 0) { years -= 1; months += 12; }
+  return { years: Math.max(0, years), months: Math.max(0, months), days: Math.max(0, days), totalMonths: Math.max(0, years * 12 + months), exact: true };
+}
+function ageLabel(baby) { const age = ageDetails(baby); return age.exact ? `${age.years} años · ${age.months} meses · ${age.days} días` : (Number(baby?.ageMonths || 0) ? `${age.years} años · ${age.months} meses · agrega fecha para días` : "Agrega fecha de nacimiento"); }
+function ageMonths(baby) { return ageDetails(baby).totalMonths; }
 
 function sampleData() {
   const babyId = "baby-sofia";
   return {
     family: { id: "demo-family", name: "Familia Demo" },
-    babies: [{ id: babyId, name: "Sofía", ageMonths: 8, weightKg: 8.2, heightCm: 70, createdAt: Date.now() }],
+    babies: [{ id: babyId, name: "Sofía", birthDate: "2026-02-11", ageMonths: 8, weightKg: 8.2, heightCm: 70, createdAt: Date.now() }],
     products: [
       { id: "p-m", babyId, name: "Pañales Premium", category: "Pañales", size: "M", quantity: 24, unit: "unidades", minStock: 20, notes: "", createdAt: Date.now(), updatedAt: Date.now() },
       { id: "p-g", babyId, name: "Pañales Ultra", category: "Pañales", size: "G", quantity: 8, unit: "unidades", minStock: 15, notes: "", createdAt: Date.now(), updatedAt: Date.now() },
@@ -170,10 +180,10 @@ function renderStockConsultation(query = $("stock-consult-input")?.value || "") 
 function renderGrowth() {
   const baby = state.babies.find((item) => item.id === state.activeBabyId); const summary = $("growth-summary"); const trend = $("growth-trend"); const history = $("growth-history"); if (!baby || !summary || !trend) return;
   const records = (state.measurements || []).filter((item) => item.babyId === baby.id).sort((a, b) => b.createdAt - a.createdAt);
-  const latest = records[0] || baby; const previous = records[1]; const weight = Number(latest.weightKg || baby.weightKg || 0); const height = Number(latest.heightCm || baby.heightCm || 0); const months = ageMonths(baby);
-  summary.innerHTML = `<div><strong>${months || "—"}</strong><small>meses</small></div><div><strong>${weight || "—"}</strong><small>kg</small></div><div><strong>${height || "—"}</strong><small>cm</small></div>`;
+  const latest = records[0] || baby; const previous = records[1]; const weight = Number(latest.weightKg || baby.weightKg || 0); const height = Number(latest.heightCm || baby.heightCm || 0); const age = ageDetails(baby);
+  summary.innerHTML = `<div class="growth-age"><strong>${escapeHtml(ageLabel(baby))}</strong><small>${age.exact ? "edad exacta" : "fecha de nacimiento pendiente"}</small></div><div><strong>${weight || "—"}</strong><small>kg</small></div><div><strong>${height || "—"}</strong><small>cm</small></div>`;
   const weightChange = previous && weight && previous.weightKg ? weight - Number(previous.weightKg) : null; const heightChange = previous && height && previous.heightCm ? height - Number(previous.heightCm) : null;
-  if (!records.length) trend.textContent = "Aún no hay mediciones. Actualiza peso o estatura para iniciar el seguimiento.";
+  if (!records.length) trend.textContent = age.exact ? "Aún no hay mediciones. Actualiza peso o estatura para iniciar el seguimiento." : "Agrega la fecha de nacimiento y una primera medición para iniciar el seguimiento.";
   else if (weightChange !== null || heightChange !== null) trend.textContent = `Último registro: ${latest.date || formatDate(latest.createdAt)}${weightChange !== null ? ` · ${weightChange >= 0 ? "+" : ""}${weightChange.toFixed(2)} kg desde la medición anterior` : ""}${heightChange !== null ? ` · ${heightChange >= 0 ? "+" : ""}${heightChange.toFixed(1)} cm` : ""}.`;
   else trend.textContent = `Último registro: ${latest.date || formatDate(latest.createdAt)}. Agrega otra medición para ver la evolución.`;
   if (history) history.innerHTML = records.length ? `<p class="history-label">Historial reciente</p>${records.slice(0, 4).map((item) => `<div class="growth-history-item"><span>${escapeHtml(item.date || formatDate(item.createdAt))}</span><strong>${item.weightKg ? `${item.weightKg} kg` : ""}${item.weightKg && item.heightCm ? " · " : ""}${item.heightCm ? `${item.heightCm} cm` : ""}</strong>${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}</div>`).join("")}` : "";
@@ -238,7 +248,7 @@ function renderStats(products) {
   const allConsumption = analyses.filter((item) => item.data.status === "ready");
   const spent30 = recordedConsumption.reduce((sum, item) => sum + item.data.used * Number(item.product.unitPrice || 0), 0);
   const projected4Weeks = allConsumption.reduce((sum, item) => sum + item.data.weekly * 4 * Number(item.product.unitPrice || 0), 0);
-  $("stats-grid").innerHTML = `<article><strong>${baby.ageMonths || "—"}</strong><small>meses</small></article><article><strong>${baby.weightKg || "—"}</strong><small>kg</small></article><article><strong>${baby.heightCm || "—"}</strong><small>cm</small></article>`;
+  $("stats-grid").innerHTML = `<article class="age-stat"><strong>${escapeHtml(ageLabel(baby))}</strong><small>edad</small></article><article><strong>${baby.weightKg || "—"}</strong><small>kg</small></article><article><strong>${baby.heightCm || "—"}</strong><small>cm</small></article>`;
   const plans = analyses.map(({ product, data }) => ({ product, data, plan: purchaseRecommendation(product, data) }));
   const reliable = plans.filter(({ data }) => data.status === "ready");
   const shortest = reliable.length ? Math.max(0, Math.floor(Math.min(...reliable.map(({ data }) => data.daysLeft)))) : null;
@@ -386,7 +396,7 @@ function openBabyDataModal() {
 }
 async function saveBabyData(event) {
   event.preventDefault(); const current = state.babies.find((item) => item.id === state.activeBabyId); if (!current) return;
-  const name = $("edit-baby-name").value.trim(); const birthDate = $("edit-baby-birthdate").value; const weightKg = Number($("edit-baby-weight").value || 0); const heightCm = Number($("edit-baby-height").value || 0); const date = $("edit-measurement-date").value; const note = $("edit-measurement-note").value.trim(); const measuredAt = new Date(`${date}T12:00:00`).getTime(); const baby = { ...current, name, birthDate: birthDate || "", weightKg: weightKg || 0, heightCm: heightCm || 0, ageMonths: birthDate ? ageMonths({ birthDate }) : Number(current.ageMonths || 0), updatedAt: Date.now() };
+  const name = $("edit-baby-name").value.trim(); const birthDate = $("edit-baby-birthdate").value; const weightKg = Number($("edit-baby-weight").value || 0); const heightCm = Number($("edit-baby-height").value || 0); const date = $("edit-measurement-date").value; const note = $("edit-measurement-note").value.trim(); if (birthDate && new Date(`${birthDate}T12:00:00`) > new Date()) return showToast("La fecha de nacimiento no puede ser futura."); const measuredAt = new Date(`${date}T12:00:00`).getTime(); const baby = { ...current, name, birthDate: birthDate || "", weightKg: weightKg || 0, heightCm: heightCm || 0, ageMonths: birthDate ? ageMonths({ birthDate }) : Number(current.ageMonths || 0), updatedAt: Date.now() };
   const measurement = (weightKg || heightCm) ? { id: uid("measure"), babyId: current.id, weightKg, heightCm, date, note, createdAt: measuredAt, actor: state.preferences?.displayName || state.user?.email || "Familia" } : null;
   try {
     if (mode === "demo") { state.babies = state.babies.map((item) => item.id === current.id ? baby : item); if (measurement) state.measurements = [measurement, ...(state.measurements || [])]; saveDemo(); render(); }
@@ -399,7 +409,7 @@ async function publishFamilyPost(event) {
   try { if (mode === "demo") { state.familyPosts = [post, ...(state.familyPosts || [])]; saveDemo(); render(); } else await firebase.setDoc(firebase.doc(firebase.db, "families", state.family.id, "familyPosts", post.id), post); $("family-post-text").value = ""; showToast("Publicado para tu familia."); } catch (error) { showToast(error.message || "No se pudo publicar la nota."); }
 }
 async function addBaby(event) {
-  event.preventDefault(); const name = $("baby-name").value.trim(); if (!name) return; const baby = { id: uid("baby"), name, ageMonths: Number($("baby-age").value || 0), weightKg: Number($("baby-weight").value || 0), heightCm: Number($("baby-height").value || 0), createdAt: Date.now() };
+  event.preventDefault(); const name = $("baby-name").value.trim(), birthDate = $("baby-birthdate").value; if (!name || !birthDate) return; if (new Date(`${birthDate}T12:00:00`) > new Date()) return showToast("La fecha de nacimiento no puede ser futura."); const baby = { id: uid("baby"), name, birthDate, ageMonths: ageMonths({ birthDate }), weightKg: Number($("baby-weight").value || 0), heightCm: Number($("baby-height").value || 0), createdAt: Date.now() };
   const measurement = (baby.weightKg || baby.heightCm) ? { id: uid("measure"), babyId: baby.id, weightKg: baby.weightKg, heightCm: baby.heightCm, date: localDateInput(), note: "Medición inicial", createdAt: Date.now(), actor: state.preferences?.displayName || state.user?.email || "Familia" } : null;
   try { if (mode === "demo") { state.babies.push(baby); if (measurement) state.measurements = [measurement, ...(state.measurements || [])]; state.activeBabyId = baby.id; saveDemo(); render(); } else { const familyRef = firebase.doc(firebase.db, "families", state.family.id); const batch = firebase.writeBatch(firebase.db); batch.set(firebase.doc(familyRef, "babies", baby.id), baby); if (measurement) batch.set(firebase.doc(familyRef, "measurements", measurement.id), measurement); await batch.commit(); } $("baby-form").reset(); closeModals(); showToast("Bebé agregado."); } catch (error) { showToast(error.message || "No se pudo agregar."); }
 }
@@ -453,5 +463,5 @@ document.querySelectorAll("[data-view-target]").forEach((button) => button.oncli
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
 document.querySelectorAll(".close-modal").forEach((button) => button.onclick = closeModals);
 document.querySelectorAll(".modal").forEach((modal) => modal.addEventListener("click", (event) => { if (event.target === modal) closeModals(); }));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-views").catch((error) => console.warn("PWA sin caché:", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-age").catch((error) => console.warn("PWA sin caché:", error)));
 if (firebaseIsConfigured) initFirebase();
