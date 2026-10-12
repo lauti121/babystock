@@ -6,6 +6,7 @@ let mode = "demo";
 let firebase = null;
 let unsubscribe = [];
 let creatingAccount = false;
+let currentView = "home";
 let state = { user: null, family: null, babies: [], products: [], movements: [], measurements: [], familyPosts: [], activeBabyId: "", preferences: { theme: "rose", accent: "", font: "friendly", scale: "normal", surface: "soft", backgroundOpacity: 22, displayName: "", bio: "", avatar: "", background: "" } };
 const themes = {
   rose: { accent: "#e66c91", dark: "#c34c70", soft: "#ffe4ec", quiet: "#fff3f6", heroA: "#fae2eb", heroB: "#eee2ff" },
@@ -126,7 +127,14 @@ async function openFirebaseFamily(user) {
 function clearSubscriptions() { unsubscribe.forEach((stop) => stop()); unsubscribe = []; }
 
 function showAuth() { clearSubscriptions(); appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); }
-function showApp() { authScreen.classList.add("hidden"); appScreen.classList.remove("hidden"); render(); }
+function showView(view = "home", scroll = true) {
+  currentView = document.querySelector(`.app-view[data-view="${view}"]`) ? view : "home";
+  document.querySelectorAll(".app-view").forEach((page) => page.classList.toggle("active", page.dataset.view === currentView));
+  document.querySelectorAll("[data-view-target]").forEach((button) => button.classList.toggle("active", button.dataset.viewTarget === currentView));
+  appScreen.dataset.view = currentView;
+  if (scroll) window.scrollTo({ top: 0, behavior: "smooth" });
+}
+function showApp() { authScreen.classList.add("hidden"); appScreen.classList.remove("hidden"); showView(currentView, false); render(); }
 
 function render() {
   if (appScreen.classList.contains("hidden")) return;
@@ -160,7 +168,7 @@ function renderStockConsultation(query = $("stock-consult-input")?.value || "") 
   result.innerHTML = matches.slice(0, 4).map((product) => { const data = productConsumption(product); const coverage = data.status === "ready" ? ` · aprox. ${Math.max(0, Math.floor(data.daysLeft))} días de cobertura` : ""; return `<div class="consult-answer"><span class="insight-icon">${icons[product.category] || "◌"}</span><div><strong>${escapeHtml(product.name)}: ${unitLabel(product.quantity, product.unit)}</strong><small>${isLow(product) ? "Está bajo el mínimo" : "Stock en nivel actual"}${coverage}</small></div></div>`; }).join("");
 }
 function renderGrowth() {
-  const baby = state.babies.find((item) => item.id === state.activeBabyId); const summary = $("growth-summary"); const trend = $("growth-trend"); if (!baby || !summary || !trend) return;
+  const baby = state.babies.find((item) => item.id === state.activeBabyId); const summary = $("growth-summary"); const trend = $("growth-trend"); const history = $("growth-history"); if (!baby || !summary || !trend) return;
   const records = (state.measurements || []).filter((item) => item.babyId === baby.id).sort((a, b) => b.createdAt - a.createdAt);
   const latest = records[0] || baby; const previous = records[1]; const weight = Number(latest.weightKg || baby.weightKg || 0); const height = Number(latest.heightCm || baby.heightCm || 0); const months = ageMonths(baby);
   summary.innerHTML = `<div><strong>${months || "—"}</strong><small>meses</small></div><div><strong>${weight || "—"}</strong><small>kg</small></div><div><strong>${height || "—"}</strong><small>cm</small></div>`;
@@ -168,6 +176,7 @@ function renderGrowth() {
   if (!records.length) trend.textContent = "Aún no hay mediciones. Actualiza peso o estatura para iniciar el seguimiento.";
   else if (weightChange !== null || heightChange !== null) trend.textContent = `Último registro: ${latest.date || formatDate(latest.createdAt)}${weightChange !== null ? ` · ${weightChange >= 0 ? "+" : ""}${weightChange.toFixed(2)} kg desde la medición anterior` : ""}${heightChange !== null ? ` · ${heightChange >= 0 ? "+" : ""}${heightChange.toFixed(1)} cm` : ""}.`;
   else trend.textContent = `Último registro: ${latest.date || formatDate(latest.createdAt)}. Agrega otra medición para ver la evolución.`;
+  if (history) history.innerHTML = records.length ? `<p class="history-label">Historial reciente</p>${records.slice(0, 4).map((item) => `<div class="growth-history-item"><span>${escapeHtml(item.date || formatDate(item.createdAt))}</span><strong>${item.weightKg ? `${item.weightKg} kg` : ""}${item.weightKg && item.heightCm ? " · " : ""}${item.heightCm ? `${item.heightCm} cm` : ""}</strong>${item.note ? `<small>${escapeHtml(item.note)}</small>` : ""}</div>`).join("")}` : "";
 }
 function renderFamilyFeed() {
   const feed = $("family-feed"); if (!feed) return; const labels = { nota: "Nota", compra: "Compra", recuerdo: "Recuerdo" }; const posts = (state.familyPosts || []).slice(0, 20);
@@ -373,7 +382,7 @@ async function archiveProduct() {
 }
 function openBabyDataModal() {
   const baby = state.babies.find((item) => item.id === state.activeBabyId); if (!baby) return showToast("Primero agrega o selecciona un bebé.");
-  $("edit-baby-name").value = baby.name || ""; $("edit-baby-birthdate").value = baby.birthDate || ""; $("edit-baby-weight").value = baby.weightKg ?? ""; $("edit-baby-height").value = baby.heightCm ?? ""; $("edit-measurement-date").value = localDateInput(); $("edit-measurement-note").value = ""; openModal("baby-data-modal");
+  $("edit-baby-name").value = baby.name || ""; $("edit-baby-birthdate").value = baby.birthDate || ""; $("edit-baby-weight").value = baby.weightKg ?? ""; $("edit-baby-height").value = baby.heightCm ?? ""; $("edit-measurement-date").value = localDateInput(); $("edit-measurement-note").value = ""; openModal("baby-data-modal"); $("edit-baby-weight").focus();
 }
 async function saveBabyData(event) {
   event.preventDefault(); const current = state.babies.find((item) => item.id === state.activeBabyId); if (!current) return;
@@ -383,7 +392,7 @@ async function saveBabyData(event) {
     if (mode === "demo") { state.babies = state.babies.map((item) => item.id === current.id ? baby : item); if (measurement) state.measurements = [measurement, ...(state.measurements || [])]; saveDemo(); render(); }
     else { const familyRef = firebase.doc(firebase.db, "families", state.family.id); const batch = firebase.writeBatch(firebase.db); batch.set(firebase.doc(familyRef, "babies", current.id), baby, { merge: true }); if (measurement) batch.set(firebase.doc(familyRef, "measurements", measurement.id), measurement); await batch.commit(); }
     closeModals(); showToast(measurement ? "Seguimiento guardado." : "Datos del bebé actualizados.");
-  } catch (error) { showToast(error.message || "No se pudo guardar el seguimiento."); }
+  } catch (error) { console.error(error); showToast(error.code === "permission-denied" ? "No tienes permiso para guardar. Pide al administrador de la familia acceso de edición." : (error.message || "No se pudo guardar el seguimiento.")); }
 }
 async function publishFamilyPost(event) {
   event.preventDefault(); const text = $("family-post-text").value.trim(); if (!text) return; const post = { id: uid("post"), type: $("family-post-type").value, text, createdAt: Date.now(), actor: state.preferences?.displayName || state.user?.email || "Familia", actorId: state.user?.uid || "demo" };
@@ -425,13 +434,13 @@ $("add-product-button").onclick = () => openProductModal(); $("product-form").ad
 $("archive-product-button").onclick = archiveProduct;
 $("add-baby-button").onclick = () => openModal("baby-modal"); $("baby-form").addEventListener("submit", addBaby);
 $("archive-baby-button").onclick = archiveBaby;
-$("edit-baby-data-button").onclick = openBabyDataModal; $("baby-data-form").addEventListener("submit", saveBabyData);
+$("edit-baby-data-button").onclick = openBabyDataModal; $("add-measurement-button").onclick = openBabyDataModal; $("baby-data-form").addEventListener("submit", saveBabyData);
 $("baby-select").onchange = (event) => { state.activeBabyId = event.target.value; saveDemo(); render(); };
 $("stock-consult-form").addEventListener("submit", (event) => { event.preventDefault(); renderStockConsultation(); });
 $("stock-consult-input").addEventListener("input", () => renderStockConsultation());
 document.querySelectorAll("[data-query]").forEach((button) => button.onclick = () => { $("stock-consult-input").value = button.dataset.query; renderStockConsultation(button.dataset.query); });
 $("family-post-form").addEventListener("submit", publishFamilyPost);
-$("profile-button").onclick = openProfileModal; $("nav-profile").onclick = openProfileModal; $("profile-form").addEventListener("submit", saveProfile);
+$("profile-button").onclick = openProfileModal; $("profile-form").addEventListener("submit", saveProfile);
 $("invite-form").addEventListener("submit", createInvite); $("join-form").addEventListener("submit", joinFamily);
 $("notifications-button").onclick = requestNotifications;
 document.querySelectorAll(".theme-swatch").forEach((button) => button.onclick = () => { const theme = themes[button.dataset.theme] || themes.rose; state.preferences = { ...defaultPreferences(), ...state.preferences, theme: button.dataset.theme, accent: "" }; $("profile-accent").value = theme.accent; $("accent-value").textContent = theme.accent.toUpperCase(); applyPreferences(); document.querySelectorAll(".theme-swatch").forEach((item) => item.classList.toggle("selected", item === button)); });
@@ -440,9 +449,9 @@ $("profile-accent").oninput = (event) => { state.preferences = { ...defaultPrefe
 $("background-opacity").oninput = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, backgroundOpacity: Number(event.target.value) }; $("background-opacity-value").textContent = `${event.target.value}%`; applyPreferences(); };
 $("profile-font").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, font: event.target.value }; applyPreferences(); };
 $("profile-scale").onchange = (event) => { state.preferences = { ...defaultPreferences(), ...state.preferences, scale: event.target.value }; applyPreferences(); };
-document.querySelectorAll("[data-scroll]").forEach((button) => button.onclick = () => { const target = button.dataset.scroll === "shopping" ? $("shopping-list") : button.dataset.scroll === "family" ? $("family-space-section") : appScreen; target.scrollIntoView({ behavior: "smooth" }); });
+document.querySelectorAll("[data-view-target]").forEach((button) => button.onclick = () => showView(button.dataset.viewTarget));
 $("logout-button").onclick = async () => { closeModals(); if (mode === "firebase" && firebase) await firebase.signOut(firebase.auth); else { appScreen.classList.add("hidden"); authScreen.classList.remove("hidden"); } };
 document.querySelectorAll(".close-modal").forEach((button) => button.onclick = closeModals);
 document.querySelectorAll(".modal").forEach((modal) => modal.addEventListener("click", (event) => { if (event.target === modal) closeModals(); }));
-if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-family").catch((error) => console.warn("PWA sin caché:", error)));
+if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("./service-worker.js?v=20261011-views").catch((error) => console.warn("PWA sin caché:", error)));
 if (firebaseIsConfigured) initFirebase();
