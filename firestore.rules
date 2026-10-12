@@ -52,6 +52,12 @@ service cloud.firestore {
         allow update: if isOwner(familyId);
         allow delete: if false;
       }
+      match /devices/{docId} {
+        allow read: if isMember(familyId);
+        allow create: if isMember(familyId) && request.resource.data.userId == request.auth.uid;
+        allow update: if isMember(familyId) && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
+        allow delete: if isMember(familyId) && resource.data.userId == request.auth.uid;
+      }
     }
   }
 }
